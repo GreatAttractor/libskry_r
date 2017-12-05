@@ -1,0 +1,4 @@
+[package]
+name = "skry"
+version = "0.3.0"
+authors = ["Filip Szczerek <ga.software@yahoo.com>"]
