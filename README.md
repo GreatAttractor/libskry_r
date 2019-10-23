@@ -29,6 +29,8 @@ For sample results, see the [**gallery**](https://www.astrobin.com/users/GreatAt
 
 See `doc/example1.rs` for a usage example.
 
+See also the [**Algorithms summary**](https://github.com/GreatAttractor/libskry/raw/master/doc/algorithms.pdf) in *libskry* repository.
+
 
 ----------------------------------------
 ## 2. Performance comparison with C
