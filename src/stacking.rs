@@ -23,7 +23,7 @@ struct StackTrianglePoint {
     // Image coordinates in the stack
     pub x: i32,
     pub y: i32,
-    
+
     // Barycentric coordinates in the parent triangle
     pub u: f32,
     pub v: f32
@@ -33,13 +33,13 @@ struct StackTrianglePoint {
 /// Performs image stacking (shift-and-add summation).
 pub struct StackingProc<'a> {
     img_seq: &'a mut ImageSequence,
-    
+
     img_align_data: &'a ImgAlignmentData,
-        
+
     ref_pt_align_data: &'a RefPointAlignmentData,
-    
+
     is_complete: bool,
-    
+
     /// For each triangle in `ref_pt_align_data.triangulation`, contains a list of points comprising it.
     rasterized_tris: Vec<Vec<StackTrianglePoint>>,
 
@@ -69,7 +69,7 @@ impl<'a> StackingProc<'a> {
                 ref_pt_align_data: &'a RefPointAlignmentData,
                 flatfield: Option<Image>)
         -> Result<StackingProc<'a>, ImageError> {
-          
+
         img_seq.seek_start();
 
         let final_ref_pt_pos = ref_pt_align_data.get_final_positions();
@@ -77,7 +77,7 @@ impl<'a> StackingProc<'a> {
         let triangulation = &ref_pt_align_data.get_ref_pts_triangulation();
         let mut rasterized_tris = Vec::<Vec<StackTrianglePoint>>::with_capacity(triangulation.get_triangles().len());
         let curr_step_stacked_triangles = Vec::<usize>::with_capacity(triangulation.get_triangles().len());
-        
+
         let intersection = img_align_data.get_intersection();
         let mut pixel_occupied = vec![false; (intersection.width * intersection.height) as usize];
 
@@ -92,7 +92,7 @@ impl<'a> StackingProc<'a> {
         }
         //TODO: see if after rasterization there are any pixels not belonging to any triangle and assign them
 
-        let (_, _, pix_fmt, _) = try!(img_seq.get_curr_img_metadata());
+        let (_, _, pix_fmt, _) = img_seq.get_curr_img_metadata()?;
 
         let stack_pix_fmt = if image::get_num_channels(pix_fmt) == 1 && !pix_fmt.is_cfa() {
                                 PixelFormat::Mono32f
@@ -105,10 +105,10 @@ impl<'a> StackingProc<'a> {
         let added_img_count = vec![0usize; (intersection.width * intersection.height) as usize];
 
         let mut flatfield_inv: Option<Image> = None;
-        
+
         if flatfield.is_some() {
             let mut ffield = flatfield.unwrap();
-            
+
             let ffield_inv =
                 if ffield.get_pixel_format() == PixelFormat::Mono32f {
                     ffield.get_copy()
@@ -142,28 +142,28 @@ impl<'a> StackingProc<'a> {
             flatfield_inv
         })
     }
-        
-        
+
+
     /// Returns the image stack; can be used only after stacking completes.
     pub fn get_image_stack(&self) -> &Image {
         assert!(self.is_complete);
         &self.image_stack
     }
-    
-    
+
+
     /// Returns an incomplete image stack, updated after every stacking step.
     pub fn get_partial_image_stack(&self) -> Image {
         let mut pstack = self.image_stack.get_copy();
         normalize_image_stack(&self.added_img_count, &mut pstack, self.flatfield_inv.is_some());
         pstack
     }
-    
-    
+
+
     pub fn is_complete(&self) -> bool {
         self.is_complete
     }
-    
-    
+
+
     /// Returns an array of triangle indices stacked in current step.
     ///
     /// Meant to be called right after `step()`. Values are indices into triangle array
@@ -172,13 +172,13 @@ impl<'a> StackingProc<'a> {
     /// returned by `get_ref_pt_stacking_pos()`.
     ///
     pub fn get_curr_step_stacked_triangles(&self) -> &[usize] {
-        &self.curr_step_stacked_triangles        
+        &self.curr_step_stacked_triangles
     }
 
     /// Returns reference point positions as used during stacking.
     pub fn get_ref_pt_stacking_pos(&self) -> &[PointFlt] {
         &self.final_ref_pt_pos
-    }    
+    }
 }
 
 
@@ -187,8 +187,8 @@ impl<'a> ProcessingPhase for StackingProc<'a>
     fn get_curr_img(&mut self) -> Result<Image, ImageError> {
         self.img_seq.get_curr_img()
     }
-    
-    
+
+
     fn step(&mut self) -> Result<(), ProcessingError> {
         if self.first_step_complete {
             match self.img_seq.seek_next() {
@@ -201,7 +201,7 @@ impl<'a> ProcessingPhase for StackingProc<'a>
             }
         }
 
-        let mut img = try!(self.img_seq.get_curr_img());
+        let mut img = self.img_seq.get_curr_img()?;
         let curr_img_idx = self.img_seq.get_curr_img_idx_within_active_subset();
 
         let intersection = self.img_align_data.get_intersection();
@@ -228,7 +228,7 @@ impl<'a> ProcessingPhase for StackingProc<'a>
             let p0 = self.ref_pt_align_data.get_ref_pt_pos(tri.v0, curr_img_idx);
             let p1 = self.ref_pt_align_data.get_ref_pt_pos(tri.v1, curr_img_idx);
             let p2 = self.ref_pt_align_data.get_ref_pt_pos(tri.v2, curr_img_idx);
-            
+
             if p0.is_valid && p1.is_valid && p2.is_valid {
                 // Due to the way reference point alignment works, it is allowed for a point
                 // to be outside the image intersection at some times. Must be careful not to
@@ -236,9 +236,9 @@ impl<'a> ProcessingPhase for StackingProc<'a>
                 // (Cannot use `intersection` here directly, because its origin may not be (0,0),
                 // and `p0`, `p1`, `p2` have coordinates relative to intersection's origin.)
                 let p0_inside = envelope.contains_point(&p0.pos);
-                let p1_inside = envelope.contains_point(&p1.pos);    
+                let p1_inside = envelope.contains_point(&p1.pos);
                 let p2_inside = envelope.contains_point(&p2.pos);
-                
+
                 if p0_inside || p1_inside || p2_inside {
                     self.curr_step_stacked_triangles.push(tri_idx);
                 }
@@ -246,17 +246,17 @@ impl<'a> ProcessingPhase for StackingProc<'a>
         }
 
         // Second, stack the triangles
-        
+
         let src_pixels = img.get_pixels::<f32>();
-        
+
         let stack_stride = self.image_stack.get_width() as usize * num_channels;
         let stack_pixels = self.image_stack.get_pixels_mut::<f32>();
-        
+
         let mut flatf_pixels: &[f32] = &Vec::<f32>::new()[..];
         let mut flatf_stride = 0;
-        
+
         if self.flatfield_inv.is_some() {
-            let ff_inv: &Image = self.flatfield_inv.iter().next().unwrap(); 
+            let ff_inv: &Image = self.flatfield_inv.iter().next().unwrap();
             flatf_pixels = ff_inv.get_pixels::<f32>();
             flatf_stride = num_channels * ff_inv.get_width() as usize;
         };
@@ -270,7 +270,7 @@ impl<'a> ProcessingPhase for StackingProc<'a>
             let p2 = self.ref_pt_align_data.get_ref_pt_pos(tri.v2, curr_img_idx);
 
             let p0_inside = envelope.contains_point(&p0.pos);
-            let p1_inside = envelope.contains_point(&p1.pos);    
+            let p1_inside = envelope.contains_point(&p1.pos);
             let p2_inside = envelope.contains_point(&p2.pos);
             let all_inside = p0_inside && p1_inside && p2_inside;
 
@@ -303,7 +303,7 @@ impl<'a> ProcessingPhase for StackingProc<'a>
                         if self.flatfield_inv.is_some() {
                             // `flatfield_inv` contains inverted flat-field values,
                             // so we multiply instead of dividing
-                            src_val *= flatf_pixels[ffy as usize * flatf_stride + ffx as usize * num_channels]; 
+                            src_val *= flatf_pixels[ffy as usize * flatf_stride + ffx as usize * num_channels];
                         }
 
                         stack_pixels[stp.y as usize * stack_stride + stp.x as usize * num_channels + ch] += src_val;
@@ -313,11 +313,11 @@ impl<'a> ProcessingPhase for StackingProc<'a>
                 }
             }
         }
-    
+
         if !self.first_step_complete {
             self.first_step_complete = true;
         }
-        
+
         Ok(())
     }
 }
@@ -330,7 +330,7 @@ impl<'a> ProcessingPhase for StackingProc<'a>
 /// * `envelope` - Image region corresponding to `pixel_occupied`.
 /// * `pixel_occupied` - Pixels of `envelope` (row-major order). If a pixel belongs
 ///                      to the rasterized triangle, will be set to `true`.
-///  
+///
 fn rasterize_triangle(
     v0: &PointFlt,
     v1: &PointFlt,
@@ -344,21 +344,21 @@ fn rasterize_triangle(
 
     let mut points: Vec<StackTrianglePoint> = vec![];
 
-    let xmin = *[v0.x as i32, v1.x as i32, v2.x as i32].into_iter().min().unwrap();
-    let xmax = *[v0.x as i32, v1.x as i32, v2.x as i32].into_iter().max().unwrap();
-    let ymin = *[v0.y as i32, v1.y as i32, v2.y as i32].into_iter().min().unwrap();
-    let ymax = *[v0.y as i32, v1.y as i32, v2.y as i32].into_iter().max().unwrap();
+    let xmin = *[v0.x as i32, v1.x as i32, v2.x as i32].iter().min().unwrap();
+    let xmax = *[v0.x as i32, v1.x as i32, v2.x as i32].iter().max().unwrap();
+    let ymin = *[v0.y as i32, v1.y as i32, v2.y as i32].iter().min().unwrap();
+    let ymax = *[v0.y as i32, v1.y as i32, v2.y as i32].iter().max().unwrap();
 
     for y in ymin .. ymax + 1 {
         for x in xmin .. xmax + 1 {
             if envelope.contains_point(&Point{ x, y }) {
                 let is_pix_occupied = &mut pixel_occupied[(x - envelope.x + (y - envelope.y) * envelope.width as i32) as usize];
                 if !*is_pix_occupied {
-                    let (u, v) = calc_barycentric_coords!(Point{ x, y }, v0, v1, v2); 
+                    let (u, v) = calc_barycentric_coords!(Point{ x, y }, v0, v1, v2);
                     if u >= 0.0 && u <= 1.0 &&
                        v >= 0.0 && v <= 1.0 &&
                        u+v >= 0.0 && u+v <= 1.0 {
-                           
+
                         points.push(StackTrianglePoint{ x, y, u, v });
                         *is_pix_occupied = true;
                     }
@@ -403,13 +403,13 @@ pub fn interpolate_pixel_value(
     y: f32,
     channel: usize,
     num_channels: usize) -> f32 {
-        
+
     if x < 0.0 || x >= (img_width - 1) as f32 || y < 0.0 || y >= (img_height-1) as f32 {
         return 0.0;
     }
-    
+
     let vals_per_line = img_width as usize * num_channels;
-    
+
     let tx = x.fract();
     let ty = y.fract();
     let x0 = x.floor() as usize;

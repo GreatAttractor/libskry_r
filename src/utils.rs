@@ -51,13 +51,11 @@ macro_rules! calc_barycentric_coords {
 
 pub fn read_struct<T, R: Read>(read: &mut R) -> io::Result<T> {
     let num_bytes = ::std::mem::size_of::<T>();
-    unsafe {
-        let mut s = ::std::mem::uninitialized();
-        let buffer = slice::from_raw_parts_mut(&mut s as *mut T as *mut u8, num_bytes);
-        match read.read_exact(buffer) {
-            Ok(()) => Ok(s),
-            Err(e) => { ::std::mem::forget(s); Err(e) }
-        }
+    let mut s = std::mem::MaybeUninit::uninit();
+    let buffer = unsafe { slice::from_raw_parts_mut(s.as_mut_ptr() as *mut u8, num_bytes) };
+    match read.read_exact(buffer) {
+        Ok(()) => Ok(unsafe { s.assume_init() }),
+        Err(e) => { std::mem::forget(s); Err(e) }
     }
 }
 
@@ -66,7 +64,7 @@ pub fn read_vec<T>(file: &mut File, len: usize) -> io::Result<Vec<T>> {
     let mut vec = alloc_uninitialized::<T>(len);
     let num_bytes = ::std::mem::size_of::<T>() * vec.len();
     let buffer = unsafe{ slice::from_raw_parts_mut(vec[..].as_mut_ptr() as *mut u8, num_bytes) };
-    try!(file.read_exact(buffer));
+    file.read_exact(buffer)?;
     Ok(vec)
 }
 
@@ -84,7 +82,7 @@ pub fn write_struct<T, W: Write>(obj: &T, write: &mut W) -> Result<(), io::Error
 pub fn alloc_uninitialized<T>(len: usize) -> Vec<T> {
     let mut v = Vec::<T>::with_capacity(len);
     unsafe { v.set_len(len); }
-    
+
     v
 }
 
@@ -94,13 +92,13 @@ pub fn find_min_max_brightness(img: &Image) -> (u8, u8) {
     assert!(img.get_pixel_format() == PixelFormat::Mono8);
 
     let mut bmin: u8 = WHITE_8BIT;
-    let mut bmax = 0u8;  
-    
+    let mut bmax = 0u8;
+
     for val in img.get_pixels() {
         if *val < bmin { bmin = *val; }
         if *val > bmax { bmax = *val; }
     }
-    
+
     (bmin, bmax)
 }
 
@@ -195,7 +193,7 @@ pub fn assess_gradients_for_block_matching(img: &Image,
         }
     }
 
-    if max_zero_count > NUM_DIRS/3 && max_nzero_count < NUM_DIRS/4 { false } else { true} 
+    if max_zero_count > NUM_DIRS/3 && max_nzero_count < NUM_DIRS/4 { false } else { true}
 }
 
 /// Changes endianess of 16-bit words.

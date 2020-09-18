@@ -1,7 +1,7 @@
-// 
+//
 // libskry_r - astronomical image stacking
 // Copyright (c) 2017 Filip Szczerek <ga.software@yahoo.com>
-// 
+//
 // This project is licensed under the terms of the MIT license
 // (see the LICENSE file for details).
 //
@@ -57,11 +57,11 @@ fn get_ser_color_fmt(color_id: u32) -> Result<SerColorFormat, SerError> {
 //        color_id if color_id == SerColorFormat::BayerGRBG as u32 => Ok(SerColorFormat::BayerGRBG),
 //        color_id if color_id == SerColorFormat::BayerGBRG as u32 => Ok(SerColorFormat::BayerGBRG),
 //        color_id if color_id == SerColorFormat::BayerBGGR as u32 => Ok(SerColorFormat::BayerBGGR),
-        color_id if color_id == SerColorFormat::RGB       as u32 => Ok(SerColorFormat::RGB),      
-        color_id if color_id == SerColorFormat::BGR       as u32 => Ok(SerColorFormat::BGR),      
+        color_id if color_id == SerColorFormat::RGB       as u32 => Ok(SerColorFormat::RGB),
+        color_id if color_id == SerColorFormat::BGR       as u32 => Ok(SerColorFormat::BGR),
         _ => Err(SerError::UnsupportedFormat)
-    } 
-} 
+    }
+}
 
 
 /// See comment for SerHeader::little_endian
@@ -112,28 +112,26 @@ fn reverse_rgb<T>(line: &mut [T]) {
 
 impl SerFile {
 
-    pub fn new(file_name: &str) -> Result<Box<ImageProvider>, SerError> {
+    pub fn new(file_name: &str) -> Result<Box<dyn ImageProvider>, SerError> {
 
-        let mut file = try!(OpenOptions::new().read(true)
-                                              .write(false)
-                                              .open(file_name));
- 
-        let fheader: SerHeader = try!(utils::read_struct(&mut file));
-        
-        let ser_color_fmt = try!(get_ser_color_fmt(u32::from_le(fheader.color_id)));
-    
+        let mut file = OpenOptions::new().read(true).write(false).open(file_name)?;
+
+        let fheader: SerHeader = utils::read_struct(&mut file)?;
+
+        let ser_color_fmt = get_ser_color_fmt(u32::from_le(fheader.color_id))?;
+
         let bits_per_channel = u32::from_le(fheader.bits_per_channel);
         if bits_per_channel > 16 {
             return Err(SerError::InvalidBitDepth);
         }
-        
+
         let pix_fmt = match ser_color_fmt {
             SerColorFormat::Mono => if bits_per_channel <= 8 { PixelFormat::Mono8 } else { PixelFormat::Mono16 },
             SerColorFormat::RGB | SerColorFormat::BGR => if bits_per_channel <= 8 { PixelFormat::RGB8 } else { PixelFormat::RGB16 },
-//TODO: uncomment once demosaicing is ported            
+//TODO: uncomment once demosaicing is ported
 //            SerColorFormat::BayerBGGR => if bits_per_channel <= 8 { PixelFormat::CfaBGGR8 } else { PixelFormat::CfaBGGR16 },
 //            SerColorFormat::BayerGBRG => if bits_per_channel <= 8 { PixelFormat::CfaGBRG8 } else { PixelFormat::CfaGBRG16 },
-//            SerColorFormat::BayerGRBG => if bits_per_channel <= 8 { PixelFormat::CfaGRBG8 } else { PixelFormat::CfaGRBG16 },    		
+//            SerColorFormat::BayerGRBG => if bits_per_channel <= 8 { PixelFormat::CfaGRBG8 } else { PixelFormat::CfaGRBG16 },
 //            SerColorFormat::BayerRGGB => if bits_per_channel <= 8 { PixelFormat::CfaRGGB8 } else { PixelFormat::CfaRGGB16 },
             _ => panic!() // cannot happen due, thanks get_ser_color_fmt()
         };
@@ -142,7 +140,7 @@ impl SerFile {
         let width = u32::from_le(fheader.img_width);
         let height = u32::from_le(fheader.img_height);
         let num_images = u32::from_le(fheader.frame_count) as usize;
-        
+
         Ok(Box::new(
             SerFile{ file_name: String::from(file_name),
                      file: None,
@@ -152,7 +150,7 @@ impl SerFile {
                      num_images,
                      width,
                      height }
-        ))    
+        ))
     }
 }
 
@@ -161,22 +159,20 @@ impl ImageProvider for SerFile {
         assert!(idx < self.num_images);
 
         if self.file.is_none() {
-            self.file = Some(try!(OpenOptions::new().read(true)
-                                                    .write(false)
-                                                    .open(&self.file_name)));
+            self.file = Some(OpenOptions::new().read(true).write(false).open(&self.file_name)?);
         }
 
         let file: &mut File = self.file.iter_mut().next().unwrap();
 
-        let mut img = Image::new(self.width, self.height, self.pix_fmt, None, false); 
+        let mut img = Image::new(self.width, self.height, self.pix_fmt, None, false);
 
         let frame_size = (self.width * self.height) as usize * bytes_per_pixel(self.pix_fmt);
 
-        try!(file.seek(SeekFrom::Start((size_of::<SerHeader>() + idx * frame_size) as u64)));
+        file.seek(SeekFrom::Start((size_of::<SerHeader>() + idx * frame_size) as u64))?;
 
         for y in 0..self.height {
-            try!(file.read_exact(img.get_line_raw_mut(y)));
-            
+            file.read_exact(img.get_line_raw_mut(y))?;
+
             if self.ser_color_fmt == SerColorFormat::BGR {
                 match self.pix_fmt {
                     PixelFormat::RGB8 => reverse_rgb(img.get_line_mut::<u8>(y)),
@@ -192,18 +188,18 @@ impl ImageProvider for SerFile {
 
         Ok(img)
     }
-    
-    
+
+
     fn get_img_metadata(&self, _: usize) -> Result<(u32, u32, PixelFormat, Option<Palette>), ImageError> {
-        Ok((self.width, self.height, self.pix_fmt, None)) 
+        Ok((self.width, self.height, self.pix_fmt, None))
     }
-    
+
 
     fn img_count(&self) -> usize {
         self.num_images
     }
-    
-    
+
+
     fn deactivate(&mut self) {
         self.file = None;
     }

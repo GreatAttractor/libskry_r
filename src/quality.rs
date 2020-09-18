@@ -1,7 +1,7 @@
-// 
+//
 // libskry_r - astronomical image stacking
 // Copyright (c) 2017 Filip Szczerek <ga.software@yahoo.com>
-// 
+//
 // This project is licensed under the terms of the MIT license
 // (see the LICENSE file for details).
 //
@@ -26,7 +26,7 @@ pub struct AreaQualitySummary {
     pub min: f32,
     pub max: f32,
     pub avg: f32,
-    
+
     pub best_img_idx: usize
 }
 
@@ -34,7 +34,7 @@ pub struct AreaQualitySummary {
 /// Quality estimation area.
 struct QualEstArea {
     /// Area's boundaries within the images' intersection.
-    pub rect: Rect, 
+    pub rect: Rect,
 
     /// Contains a fragment of the image in which the estimation area has the highest quality (out of all sequence's images).
     ///
@@ -46,7 +46,7 @@ struct QualEstArea {
 
     /// Position of `ref_block` within the images' intersection.
     pub ref_block_pos: Point,
-    
+
     pub summary: AreaQualitySummary
 }
 
@@ -72,58 +72,58 @@ struct OverallQuality {
 pub struct QualityEstimationData {
     /// Images' intersection.
     intersection: Rect,
-    
+
     /// Number of quality est. areas that span the images' intersection horizontally.
     num_areas_horz: usize,
-    
+
     /// Definitions of quality estimation areas.
     area_defs: Vec<QualEstArea>,
-    
+
     // Brightness of quality estimation areas' reference blocks.
     min_ref_block_brightness: u8,
     max_ref_block_brightness: u8,
-    
+
     /// Most areas are squares with sides of `area_size` length (border areas may be smaller).
     area_size: u32,
-    
+
     /// Array of the areas' quality in all images.
     ///
     /// Each element corresponds to an active image in the image sequence,
     /// and is a vector containing one element for each quality estimation area.
     ///
     area_quality: Vec<Vec<f32>>,
-    
+
     overall: OverallQuality,
-    
+
     /// Overall quality of images in the image sequence.
     img_quality: Vec<f32>
 }
 
 
 impl QualityEstimationData {
-    
+
     pub fn get_intersection(&self) -> &Rect { &self.intersection }
-    
+
     pub fn get_num_areas(&self) -> usize {
         self.area_defs.len()
     }
-    
-    
+
+
     pub fn get_min_nonzero_avg_area_quality(&self) -> f32 {
         return self.overall.area_min_nonzero_avg
     }
-    
-    
+
+
     pub fn get_overall_avg_area_quality(&self) -> f32 {
         return self.overall.area_avg
     }
-    
-    
+
+
     pub fn get_best_img_idx(&self) -> usize {
         self.overall.image_best_img_idx
     }
-        
-    
+
+
     /// Returns area quality in the specified image.
     pub fn get_area_quality(&self, area_idx: usize, img_idx: usize) -> f32 	{
         self.area_quality[img_idx][area_idx]
@@ -133,16 +133,16 @@ impl QualityEstimationData {
     pub fn get_best_avg_area_quality(&self) -> f32 {
         self.overall.area_max_avg
     }
-    
-    
+
+
     pub fn get_qual_est_area_center(&self, area_idx: usize) -> Point {
         let arect = &self.area_defs[area_idx].rect;
-        
+
         Point { x: arect.x + arect.width as i32/2,
                 y: arect.y + arect.height as i32/2 }
     }
 
-    
+
     /// Returns suggested reference point positions.
     ///
     /// # Parameters
@@ -166,7 +166,7 @@ impl QualityEstimationData {
         structure_scale: u32,
         spacing: u32,
         ref_block_size: u32) -> Vec<Point> {
-            
+
         let grid_step = spacing;
 
         let num_grid_cols = self.intersection.width / grid_step as u32;
@@ -195,7 +195,7 @@ impl QualityEstimationData {
                 let search_step = ref_block_size as i32 / 2;
                 let mut best_fitness = 0.0f64;
                 let mut best_pos = Point::default();
-    
+
                 // Do not try to place ref. points too close to images' intersection border
                 let ystart = if grid_row > 0 { 0i32 } else { ref_block_size as i32 / 2 };
                 let yend = if grid_row <= num_grid_rows as i32 - 2 { grid_step as i32 }
@@ -206,9 +206,9 @@ impl QualityEstimationData {
                            else { self.intersection.width as i32 - (num_grid_cols as i32 - 1) * grid_step as i32 - ref_block_size as i32 / 2 };
 
                 { // Sub-scope needed to temporarily store refs. to `grid`'s elements in `neighbor_cell_points`
-                  
+
                     let mut neighbor_cell_points = Vec::<Option<&Point>>::with_capacity(8);
-        
+
                     // Check the 8 neighboring cells for already existing ref. points
                     for d_row in -1i32..2 {
                         for d_col in -1i32..2 {
@@ -221,24 +221,24 @@ impl QualityEstimationData {
                             }
                         }
                     }
-        
+
                     let mut y = ystart;
                     while y < yend {
                         let mut x = xstart;
                         while x < xend {
                             let curr_pos = Point{ x: grid_col * grid_step as i32 + x, y: grid_row * grid_step as i32 + y };
-    
+
                             // Do not assess a location if there are already reference points
                             // in neighboring grid cells closer than `spacing`
                             let mut too_close_to_neighbor = false;
-    
+
                             for npoint in &neighbor_cell_points {
                                 if sqr!(curr_pos.x - npoint.unwrap().x) + sqr!(curr_pos.y - npoint.unwrap().y) < sqr!(spacing as i32) {
                                     too_close_to_neighbor = true;
                                     break;
                                 }
                             }
-        
+
                             if !too_close_to_neighbor {
                                 let fitness = self.assess_ref_pt_location(curr_pos, ref_block_size, structure_scale, brightness_threshold);
                                 if fitness > best_fitness {
@@ -246,14 +246,14 @@ impl QualityEstimationData {
                                     best_pos = curr_pos;
                                 }
                             }
-    
+
                             x += search_step;
                         }
-                        
+
                         y += search_step;
                     }
                 } // Sub-scope ends, now `grid` can be updated
-    
+
                 if best_fitness >= structure_threshold as f64 {
                     grid[cell_idx!(grid_row, grid_col)] = Some(best_pos);
                     result.push(best_pos);
@@ -264,7 +264,7 @@ impl QualityEstimationData {
         result
     }
 
-    
+
     /// Checks if a position has some above-background and below-white neighboring pixel values.
     ///
     /// Returns `true` if the neighborhood of `pos` contains enough pixels above the background threshold
@@ -283,40 +283,40 @@ impl QualityEstimationData {
                                 pos: Point,
                                 neighborhood_size: usize,
                                 brightness_threshold: f32) -> bool {
-                                    
+
         let mut is_neighb_brightness_sufficient = false;
         let mut non_white_px_count = 0usize;
-        
+
         let ref_block: &Image = q_area.ref_block.iter().next().unwrap();
-    
+
         for ny in max(pos.y - neighborhood_size as i32, q_area.ref_block_pos.y)
                   ..
                   min(pos.y + neighborhood_size as i32, q_area.ref_block_pos.y + ref_block.get_height() as i32 - 1) + 1 {
-                      
+
             let line = ref_block.get_line_raw((ny - q_area.ref_block_pos.y) as u32);
 
             for nx in max(pos.x - neighborhood_size as i32, q_area.ref_block_pos.x)
                       ..
                       min(pos.x + neighborhood_size as i32, q_area.ref_block_pos.x + ref_block.get_width() as i32 - 1) + 1 {
-                          
+
                 let val = line[(nx - q_area.ref_block_pos.x) as usize];
                 if val >= self.min_ref_block_brightness +
                     (brightness_threshold * (self.max_ref_block_brightness - self.min_ref_block_brightness) as f32) as u8 {
-                              
+
                     is_neighb_brightness_sufficient = true;
                 }
-    
+
                 if val < WHITE_8BIT { non_white_px_count += 1; }
             }
         }
-    
+
         // Require at least 1/3rd of neighborhood's pixels to be non-white
         let is_outside_white_disc = non_white_px_count > sqr!(2*neighborhood_size + 1) / 3;
-    
+
         is_neighb_brightness_sufficient && is_outside_white_disc
     }
-    
-    
+
+
     /// Assesses a potential location of a reference point and returns its quality (the higher, the better).
     ///
     /// Uses two criteria to check if `pos` is appropriate for block matching (performed during reference point
@@ -337,7 +337,7 @@ impl QualityEstimationData {
     ///
     fn assess_ref_pt_location(&self,
                               pos: Point,
-                              block_size: u32,	
+                              block_size: u32,
                               structure_scale: u32,
                               brightness_threshold: f32) -> f64 {
 
@@ -347,14 +347,14 @@ impl QualityEstimationData {
         if !self.background_threshold_met(qarea, pos, 5 /*TODO: make it configurable?*/, brightness_threshold) {
             return 0.0;
         }
-    
+
         // See the function's header comment for details on this check
         if !utils::assess_gradients_for_block_matching(
             qarea_ref_block,
             Point { x: pos.x - qarea.ref_block_pos.x,
                     y: pos.y - qarea.ref_block_pos.y },
             32) { // This cannot be too small (histogram would be too sparse), perhaps should depend on ref. pt. spacing
-            
+
             return 0.0;
         }
 
@@ -362,10 +362,10 @@ impl QualityEstimationData {
             Point{ x: pos.x - block_size as i32/2 - qarea.ref_block_pos.x,
                    y: pos.y - block_size as i32/2 - qarea.ref_block_pos.y },
             block_size, block_size, false);
-    
+
         // A good ref. point location should have a significant difference between sums of pixel differences
         // obtained in square "shells" centered at `pos`, having radii of 1x and 2x`structure_scale`
-    
+
         let sum_diffs_1 = get_sum_diffs_in_shell(
                             qarea_ref_block,
                             &ref_block,
@@ -381,11 +381,11 @@ impl QualityEstimationData {
                                     y: pos.y - qarea.ref_block_pos.y },
                             2*structure_scale)
             / (2*structure_scale) as u64;
-    
+
         if sum_diffs_1 > 0 { sum_diffs_2 as f64 / sum_diffs_1 as f64 } else { 0.0 }
     }
-    
-    
+
+
     /// Returns a composite image consisting of the best fragments of all frames.
     pub fn get_best_fragments_img(&self) -> Image {
         let mut result = Image::new(self.intersection.width,
@@ -401,39 +401,39 @@ impl QualityEstimationData {
                 area.rect.width, area.rect.height,
                 Some(DemosaicMethod::Simple));
         }
-    
+
         result
     }
-    
-    
+
+
     pub fn get_avg_area_quality(&self, area_idx: usize) -> f32 {
         self.area_defs[area_idx].summary.avg }
-    
-    
+
+
     /// Returns min, max, avg quality of the specified area.
     pub fn get_area_quality_summary(&self, area_idx: usize) -> AreaQualitySummary {
         self.area_defs[area_idx].summary
     }
-    
-    
+
+
     /// Returns a square image to be used as reference block for reference point alignment.
     ///
     /// # Parameters
     ///
     /// * `pos` - Center of the reference block (within images' intersection).
-    /// * `blk_size` - Desired width & height; the result may be smaller than this (but always a square). 
+    /// * `blk_size` - Desired width & height; the result may be smaller than this (but always a square).
     ///
     pub fn create_reference_block(&self, pos: Point, blk_size: u32) -> Image {
         let area = &self.area_defs[self.get_area_idx_at_pos(&pos)];
         let ref_block: &Image = area.ref_block.iter().next().unwrap();
-    
+
         let area_refb_w = ref_block.get_width();
         let area_refb_h = ref_block.get_height();
-    
+
         // Caller is requesting a square block of `blk_size`. We need to copy it from `area.ref_block`.
         // Determine the maximum size of square we can return (the square must be centered on `pos`
         // and fit in `area.ref_block`):
-        // 
+        //
         // +----------images' intersection-------------...
         // |
         // |    area.ref_block_pos
@@ -459,19 +459,19 @@ impl QualityEstimationData {
                                            y: pos.y - area.ref_block_pos.y - result_size as i32/2 },
                                     result_size, result_size, false)
     }
-    
-    
+
+
     /// Returns the index of quality estimation area at the specified position in images' intersection.
     pub fn get_area_idx_at_pos(&self, pos: &Point) -> usize {
-        
+
         // See init() for how the estimation areas are placed within the images' intersection
 
         let col = pos.x as usize / self.area_size as usize;
         let row = pos.y as usize / self.area_size as usize;
-    
+
         row * self.num_areas_horz + col
     }
-} 
+}
 
 
 /// Performs quality estimation of images.
@@ -483,13 +483,13 @@ impl QualityEstimationData {
 ///
 pub struct QualityEstimationProc<'a> {
     img_seq: &'a mut ImageSequence,
-    
+
     img_align_data: &'a ImgAlignmentData,
-    
+
     is_estimation_complete: bool,
-    
+
     data_returned: bool,
-    
+
     box_blur_radius: u32,
 
     first_step_complete: bool,
@@ -506,30 +506,30 @@ impl<'a> QualityEstimationProc<'a> {
         ::std::mem::replace(&mut self.data, QualityEstimationData::default())
     }
 
-    
+
     /// # Parameters
     ///
     /// * `estimation_area_size` - Aligned image sequence will be divided into areas of this size for quality estimation.
     /// * `detail_scale` - Corresponds to box blur radius used for quality estimation.
-    /// 
+    ///
     pub fn init(img_seq: &'a mut ImageSequence,
                 img_align_data: &'a ImgAlignmentData,
                 estimation_area_size: u32,
                 detail_scale: u32) -> QualityEstimationProc<'a> {
-                    
+
         assert!(estimation_area_size > 0);
         assert!(detail_scale > 0);
-    
+
         let intersection = img_align_data.get_intersection();
         let i_width = intersection.width;
-        let i_height = intersection.height;    
+        let i_height = intersection.height;
 
         // Divide the aligned images' intersection into quality estimation areas.
         // Each area is a square of `estimation_area_size` pixels. If there are left-overs,
         // assign them to appropriately smaller areas at the intersection's right and bottom border:
         //
         // Example: num_areas_horz = 4, num_areas_vert = 3
-        // 
+        //
         //  +----+----+----+--+
         //  |    |    |    |  |
         //  |    |    |    |  |
@@ -537,7 +537,7 @@ impl<'a> QualityEstimationProc<'a> {
         //  |    |    |    |  |
         //  |    |    |    |  |
         //  +----+----+----+--+
-        //  |    |    |    |  | 
+        //  |    |    |    |  |
         //  +----+----+----+--+
         //
         //
@@ -547,9 +547,9 @@ impl<'a> QualityEstimationProc<'a> {
 
         let width_rem = i_width % estimation_area_size;
         let height_rem = i_height % estimation_area_size;
-    
+
         let mut area_defs = Vec::<QualEstArea>::new();
-    
+
         for y in 0 .. i_height/estimation_area_size {
             for x in 0 .. i_width/estimation_area_size {
                 area_defs.push(QualEstArea{ rect: Rect{ x: (x * estimation_area_size) as i32,
@@ -564,7 +564,7 @@ impl<'a> QualityEstimationProc<'a> {
                                                                          best_img_idx: 0 }
                 });
             }
-    
+
             // Additional smaller area on the right
             if width_rem != 0 {
                 area_defs.push(QualEstArea{ rect: Rect{ x: (i_width - width_rem) as i32,
@@ -580,7 +580,7 @@ impl<'a> QualityEstimationProc<'a> {
                 });
             }
         }
-    
+
         // Row of additional smaller areas at the bottom
         if height_rem != 0 {
             for x in 0 .. i_width/estimation_area_size {
@@ -597,7 +597,7 @@ impl<'a> QualityEstimationProc<'a> {
                 });
 
             }
-    
+
             if width_rem != 0 {
                 area_defs.push(QualEstArea{ rect: Rect{ x: (i_width - width_rem) as i32,
                                                         y: (i_height - height_rem) as i32,
@@ -609,10 +609,10 @@ impl<'a> QualityEstimationProc<'a> {
                                                                          max: 0.0,
                                                                          avg: 0.0,
                                                                          best_img_idx: 0 }
-                });                                            
+                });
             }
         }
-        
+
         img_seq.seek_start();
 
         QualityEstimationProc::<'a>{
@@ -635,40 +635,40 @@ impl<'a> QualityEstimationProc<'a> {
            }
         }
     }
-    
-    
+
+
     pub fn is_complete(&self) -> bool { self.is_estimation_complete }
-    
-    
+
+
     /// Creates reference blocks for the quality estimation areas, using images where the areas have the best quality.
     fn create_reference_blocks(&mut self) -> Result<(), ImageError> {
         let intrs_ofs = Point{ x: self.data.intersection.x, y: self.data.intersection.y };
-    
+
         self.img_seq.seek_start();
         loop {
             let curr_img_idx = self.img_seq.get_curr_img_idx_within_active_subset();
-            
+
             let mut curr_img_opt: Option<Image> = None;
 
             for qarea in &mut self.data.area_defs {
                 if qarea.summary.best_img_idx == curr_img_idx {
                     if curr_img_opt.is_none() {
-                        curr_img_opt = Some(try!(self.img_seq.get_curr_img()));
+                        curr_img_opt = Some(self.img_seq.get_curr_img()?);
                         if curr_img_opt.iter().next().unwrap().get_pixel_format() != PixelFormat::Mono8 {
                             curr_img_opt = Some(curr_img_opt.iter().next().unwrap().convert_pix_fmt(PixelFormat::Mono8, Some(DemosaicMethod::Simple)));
                         }
                     }
                     let curr_img: &Image = curr_img_opt.iter().next().unwrap();
-                    
+
                     let curr_img_ofs = self.img_align_data.get_image_ofs()[curr_img_idx];
 
                     // Position of `qarea` in `curr_img`
                     let curr_area_pos =
                         Point{ x: intrs_ofs.x + curr_img_ofs.x + qarea.rect.x,
                                y: intrs_ofs.y + curr_img_ofs.y + qarea.rect.y };
-    
+
                     let asize = self.data.area_size as i32;
-    
+
                     // The desired size of ref. block is `3*asize` in width and height;
                     // need to make sure it fits in `curr_img`
                     let ifrag_x = max(0, curr_area_pos.x + qarea.rect.width as i32/2 - 3*asize/2);
@@ -681,7 +681,7 @@ impl<'a> QualityEstimationProc<'a> {
 
                     qarea.ref_block = Some(curr_img.get_fragment_copy(Point{ x: ifrag_x, y: ifrag_y },
                                                                       ifrag_width as u32, ifrag_height as u32,
-                                                                      false)); 
+                                                                      false));
                 }
             }
 
@@ -693,16 +693,16 @@ impl<'a> QualityEstimationProc<'a> {
 
         Ok(())
     }
-    
-    
+
+
     fn on_final_step(&mut self) -> Result<(), ImageError> {
         let num_active_imgs = self.img_seq.get_active_img_count();
 
-        try!(self.create_reference_blocks());    
-    
+        self.create_reference_blocks()?;
+
         self.data.overall.area_max_avg = 0.0;
         self.data.overall.area_min_nonzero_avg = ::std::f32::MAX;
-    
+
         let mut overall_sum = 0.0f64;
 
         for i in 0..self.data.area_defs.len() {
@@ -712,10 +712,10 @@ impl<'a> QualityEstimationProc<'a> {
                 quality_sum += image_qual[i];
                 overall_sum += image_qual[i] as f64;
             }
-    
+
             let qavg = quality_sum / num_active_imgs as f32;
             self.data.area_defs[i].summary.avg = qavg;
-    
+
             if qavg > self.data.overall.area_max_avg {
                 self.data.overall.area_max_avg = qavg;
             }
@@ -733,13 +733,13 @@ impl<'a> QualityEstimationProc<'a> {
                 self.data.max_ref_block_brightness = bmax;
             }
         }
-    
+
         self.data.overall.area_avg = overall_sum as f32 / (self.data.area_defs.len() * num_active_imgs) as f32;
         self.is_estimation_complete = true;
 
         Ok(())
     }
-    
+
 }
 
 
@@ -748,7 +748,7 @@ impl<'a> ProcessingPhase for QualityEstimationProc<'a> {
         self.img_seq.get_curr_img()
     }
 
-    
+
     fn step(&mut self) -> Result<(), ProcessingError> {
         if self.first_step_complete {
             match self.img_seq.seek_next() {
@@ -757,14 +757,14 @@ impl<'a> ProcessingPhase for QualityEstimationProc<'a> {
                         Err(err) => return Err(ProcessingError::ImageError(err)),
                         _ => return Err(ProcessingError::NoMoreSteps)
                     },
-                    
+
                 Ok(()) => { }
             }
         }
-    
+
         let curr_img_idx = self.img_seq.get_curr_img_idx_within_active_subset();
 
-        let mut curr_img = try!(self.img_seq.get_curr_img());
+        let mut curr_img = self.img_seq.get_curr_img()?;
         if curr_img.get_pixel_format() != PixelFormat::Mono8 {
             curr_img = curr_img.convert_pix_fmt(PixelFormat::Mono8, Some(DemosaicMethod::Simple));
         }
@@ -773,9 +773,9 @@ impl<'a> ProcessingPhase for QualityEstimationProc<'a> {
         let mut curr_img_area_quality = Vec::<f32>::new();
 
         let mut curr_img_qual = 0.0f32;
-    
+
         let alignment_ofs = self.img_align_data.get_image_ofs()[curr_img_idx];
-            
+
         let intersection = self.img_align_data.get_intersection();
 
 //        #pragma omp parallel for \
@@ -788,7 +788,7 @@ impl<'a> ProcessingPhase for QualityEstimationProc<'a> {
                 area.rect.height,
                 curr_img.get_bytes_per_line(),
                 self.box_blur_radius);
-    
+
             curr_img_qual += aqual;
             curr_img_area_quality.push(aqual);
             if aqual > area.summary.max {
@@ -807,7 +807,7 @@ impl<'a> ProcessingPhase for QualityEstimationProc<'a> {
             self.data.overall.image_best_quality = curr_img_qual;
             self.data.overall.image_best_img_idx = curr_img_idx;
         }
-        
+
         if !self.first_step_complete {
             self.first_step_complete = true;
         }
@@ -859,13 +859,13 @@ fn get_sum_diffs_in_shell(img: &Image, ref_block: &Image, cmp_pos: Point, radius
     macro_rules! calc_sums{
         () => {
             cmp_rect = Rect{ x: shell_pos.x - blk_w as i32/2,
-                             y: shell_pos.y - blk_h as i32/2,    
-                             width: blk_w as u32,                
-                             height: blk_h as u32 };             
-                                                              
+                             y: shell_pos.y - blk_h as i32/2,
+                             width: blk_w as u32,
+                             height: blk_h as u32 };
+
             sum_diffs += blk_match::calc_sum_of_squared_diffs(
-                &img, &ref_block,         
-                &shell_pos,             
+                &img, &ref_block,
+                &shell_pos,
                 &find_rect_intersection(img.get_img_rect(), cmp_rect));
         }
     };

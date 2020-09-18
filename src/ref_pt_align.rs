@@ -39,7 +39,7 @@ pub struct RefPtPosition {
 struct ReferencePoint {
     /// Index of the associated quality estimation area.
     pub qual_est_area_idx: Option<usize>,
-    
+
     /// Reference block used for block matching.
     pub ref_block: Option<Image>,
 
@@ -48,7 +48,7 @@ struct ReferencePoint {
 
     /// Index of the last valid position in `positions`.
     pub last_valid_pos_idx: Option<usize>,
-    
+
     /// Length of the last translation vector.
     pub last_transl_vec_len: f64,
     /// Squared length of the last translation vector.
@@ -96,10 +96,10 @@ pub struct RefPointAlignmentData {
 
     /// Delaunay triangulation of the reference points
     triangulation: Triangulation,
-    
+
     /// Number of valid positions of all points in all images.
     num_valid_positions: u64,
-    
+
     /// Number of rejected positions of all points in all images.
     ///
     /// Concerns positions rejected by outlier testing, not by
@@ -114,12 +114,12 @@ impl RefPointAlignmentData {
     pub fn get_num_ref_points(&self) -> usize {
         self.reference_pts.len()
     }
-    
-    
+
+
     /// Returns the final (i.e. averaged over all images) positions of reference points.
     pub fn get_final_positions(&self) -> Vec<PointFlt> {
 
-        let mut result = Vec::<PointFlt>::with_capacity(self.reference_pts.len());    
+        let mut result = Vec::<PointFlt>::with_capacity(self.reference_pts.len());
         let num_images = self.reference_pts[0].positions.len();
         for ref_pt in &self.reference_pts {
             let mut valid_pos_count = 0usize;
@@ -136,7 +136,7 @@ impl RefPointAlignmentData {
             last.x /= valid_pos_count as f32;
             last.y /= valid_pos_count as f32;
         }
-    
+
         result
     }
 
@@ -144,12 +144,12 @@ impl RefPointAlignmentData {
     pub fn get_ref_pts_triangulation(&self) -> &Triangulation {
         &self.triangulation
     }
-    
-    
+
+
     //TODO: make it also available from RefPointAlignmentProc, but only for the current image (for visualization)
     /// Returns a reference point's position in the specified image and the position's "valid" flag.
     pub fn get_ref_pt_pos(&self, point_idx: usize, img_idx: usize) -> &RefPtPosition {
-        &self.reference_pts[point_idx].positions[img_idx] 
+        &self.reference_pts[point_idx].positions[img_idx]
     }
 }
 
@@ -167,7 +167,7 @@ struct TriangleQuality {
 
 pub struct RefPointAlignmentProc<'a> {
     img_seq: &'a mut ImageSequence,
-    
+
     img_align_data: &'a ImgAlignmentData,
 
     qual_est_data: &'a QualityEstimationData,
@@ -190,7 +190,7 @@ pub struct RefPointAlignmentProc<'a> {
     tri_quality: Vec<TriangleQuality>,
 
     is_complete: bool,
-    
+
     data_returned: bool,
 
     /// Translation vectors of ref. points in recent images.
@@ -200,10 +200,10 @@ pub struct RefPointAlignmentProc<'a> {
     /// Used for clipping outliers in `update_ref_pt_positions()`.
     ///
     tvec_img_sum: [TVecSum; TVEC_SUM_NUM_IMAGES],
-    
+
     /// Index in `tvec_img_sum` to store the next sum at.
     tvec_next_entry: usize,
-    
+
     data: RefPointAlignmentData,
 }
 
@@ -239,7 +239,7 @@ impl<'a> RefPointAlignmentProc<'a> {
     ///     Value (from [0; 1]) is relative to the image's darkest (0.0) and brightest (1.0) pixels.
     ///
     /// * `structure_threshold` - Structure detection threshold; value of 1.2 is recommended.
-    ///     The greater the value, the more local contrast is required to place a ref. point.  
+    ///     The greater the value, the more local contrast is required to place a ref. point.
     ///
     /// * `structure_scale` - Corresponds to pixel size of smallest structures. Should equal 1
     ///     for optimally-sampled or undersampled images. Use higher values for oversampled (blurry) material.
@@ -256,20 +256,20 @@ impl<'a> RefPointAlignmentProc<'a> {
         search_radius: u32,
 
         // Parameters used if `points`=None (i.e., using automatic placement of ref. points)
-    
+
         placement_brightness_threshold: f32,
         structure_threshold: f32,
         structure_scale: u32,
         spacing: u32)
     -> Result<RefPointAlignmentProc<'a>, ImageError> {
-        
+
         // FIXME: detect if image size < reference_block size and return an error; THE SAME goes for image alignment phase
 
         img_seq.seek_start();
 
         let intersection = qual_est_data.get_intersection();
 
-        let mut first_img = try!(img_seq.get_curr_img());
+        let mut first_img = img_seq.get_curr_img()?;
 
         first_img = first_img.convert_pix_fmt_of_subimage(
             PixelFormat::Mono8,
@@ -286,10 +286,10 @@ impl<'a> RefPointAlignmentProc<'a> {
                 structure_threshold,
                 structure_scale,
                 spacing,
-                ref_block_size);            
+                ref_block_size);
         } else {
             actual_points = points.unwrap();
-        }        
+        }
 
         let mut reference_pts = Vec::<ReferencePoint>::new();
 
@@ -311,7 +311,7 @@ impl<'a> RefPointAlignmentProc<'a> {
         }
 
         RefPointAlignmentProc::append_surrounding_fixed_points(&mut reference_pts, intersection, img_seq);
-    
+
         // Envelope of all reference points (including the fixed ones)
         let envelope = Rect{
             x: -(intersection.width as i32) / ADDITIONAL_FIXED_PT_OFFSET_DIV as i32,
@@ -320,11 +320,11 @@ impl<'a> RefPointAlignmentProc<'a> {
             height: intersection.height + 2 * intersection.height / ADDITIONAL_FIXED_PT_OFFSET_DIV };
 
         // Find the Delaunay triangulation of the reference points
-        
+
         let initial_positions: Vec<Point> = reference_pts.iter().map(|ref p| p.positions[0].pos).collect();
-  
+
         let triangulation = Triangulation::find_delaunay_triangulation(&initial_positions, &envelope);
-        
+
         // The triangulation object contains 3 additional points comprising a triangle that covers all the other points.
         // These 3 points shall have fixed position and are not associated with any quality estimation area.
         // Add them to the list now and fill their position for all images.
@@ -334,7 +334,7 @@ impl<'a> RefPointAlignmentProc<'a> {
         }
 
         let update_flags = vec![false; reference_pts.len()];
-        
+
         let tri_quality = Vec::<TriangleQuality>::with_capacity(triangulation.get_triangles().len());
 
         let mut ref_pt_align = RefPointAlignmentProc{
@@ -352,7 +352,7 @@ impl<'a> RefPointAlignmentProc<'a> {
                                     tvec_next_entry: 0,
                                     data: RefPointAlignmentData{ reference_pts, triangulation, num_valid_positions: 0, num_rejected_positions: 0 }
                                };
-    
+
         ref_pt_align.calc_triangle_quality();
 
         ref_pt_align.update_ref_pt_positions(
@@ -364,8 +364,8 @@ impl<'a> RefPointAlignmentProc<'a> {
 
         Ok(ref_pt_align)
     }
-    
-    
+
+
     fn update_ref_pt_positions(
         &mut self,
         img: &Image,
@@ -383,9 +383,9 @@ impl<'a> RefPointAlignmentProc<'a> {
         }
 
         let mut curr_step_tvec = TVecSum{ sum_len: 0.0, sum_sq_len: 0.0, num_terms: 0 };
-        
+
         let num_active_imgs = self.img_seq.get_active_img_count();
-   
+
 //        #pragma omp parallel for
         for (tri_idx, tri) in self.data.triangulation.get_triangles().iter().enumerate() {
             // Update positions of reference points belonging to triangle `[tri_idx]` iff the sum of their quality est. areas
@@ -394,14 +394,14 @@ impl<'a> RefPointAlignmentProc<'a> {
             let mut qsum = 0.0;
 
             let tri_pts = [tri.v0, tri.v1, tri.v2];
-                               
+
             for tri_p in tri_pts.iter() {
                 match self.data.reference_pts[*tri_p].qual_est_area_idx {
                     Some(qarea) => qsum += self.qual_est_data.get_area_quality(qarea, img_idx),
                     _ => ()
                 }
             }
-            
+
             let curr_tri_q = &self.tri_quality[tri_idx];
 
             let is_quality_sufficient;
@@ -421,9 +421,9 @@ impl<'a> RefPointAlignmentProc<'a> {
             }
 
             for tri_p in tri_pts.iter() {
-                
+
                 let ref_pt = &mut self.data.reference_pts[*tri_p];
-                
+
                 if ref_pt.qual_est_area_idx.is_none() || self.update_flags[*tri_p] {
                     continue;
                 }
@@ -446,7 +446,7 @@ impl<'a> RefPointAlignmentProc<'a> {
                                                                        self.ref_block_size));
                         is_first_update = true;
                     }
-                    
+
                     let current_ref_pos = ref_pt.positions[if 0 == img_idx { 0 } else { img_idx - 1 }].pos;
 
                     let new_pos_in_img = blk_match::find_matching_position(
@@ -455,7 +455,7 @@ impl<'a> RefPointAlignmentProc<'a> {
                                                         img,
                                                         self.search_radius,
                                                         BLOCK_MATCHING_INITIAL_SEARCH_STEP);
-                    
+
                     let new_pos = new_pos_in_img - intersection.get_pos() - *img_alignment_ofs;
 
                     // Additional rejection criterion: ignore the first position update if the new position is too distant.
@@ -472,9 +472,9 @@ impl<'a> RefPointAlignmentProc<'a> {
                             Some(lvi) => {
                                 ref_pt.last_transl_vec_sqlen = Point::sqr_dist(&ref_pt.positions[img_idx].pos,
                                                                                &ref_pt.positions[lvi].pos) as f64;
-                                
+
                                 ref_pt.last_transl_vec_len = f64::sqrt(ref_pt.last_transl_vec_sqlen);
-        
+
                                 curr_step_tvec.sum_len    += ref_pt.last_transl_vec_len;
                                 curr_step_tvec.sum_sq_len += ref_pt.last_transl_vec_sqlen;
                                 curr_step_tvec.num_terms += 1;
@@ -493,7 +493,7 @@ impl<'a> RefPointAlignmentProc<'a> {
                 self.update_flags[*tri_p] = true;
             }
         }
-        
+
         let mut prev_num_terms = 0usize;
         let mut prev_sum_len = 0.0f64;
         let mut prev_sum_sq_len = 0.0f64;
@@ -502,7 +502,7 @@ impl<'a> RefPointAlignmentProc<'a> {
             prev_sum_len    += tis.sum_len;
             prev_sum_sq_len += tis.sum_sq_len;
         }
-        
+
         if curr_step_tvec.num_terms > 0 {
             let sum_len_avg: f64    = (prev_sum_len + curr_step_tvec.sum_len)       / (prev_num_terms + curr_step_tvec.num_terms) as f64;
             let sum_sq_len_avg: f64 = (prev_sum_sq_len + curr_step_tvec.sum_sq_len) / (prev_num_terms + curr_step_tvec.num_terms) as f64;
@@ -515,7 +515,7 @@ impl<'a> RefPointAlignmentProc<'a> {
             for ref_pt in &mut self.data.reference_pts {
                 if ref_pt.qual_est_area_idx.is_some() && ref_pt.positions[img_idx].is_valid &&
                    ref_pt.last_transl_vec_len > sum_len_avg + 1.5 * std_deviation {
-                       
+
                     ref_pt.positions[img_idx].is_valid = false;
                     ref_pt.positions[img_idx].pos = ref_pt.positions[img_idx-1].pos;
 
@@ -528,7 +528,7 @@ impl<'a> RefPointAlignmentProc<'a> {
                     self.data.num_valid_positions += 1;
                 }
             }
-            
+
             self.tvec_img_sum[self.tvec_next_entry] = curr_step_tvec;
             self.tvec_next_entry = (self.tvec_next_entry + 1) % TVEC_SUM_NUM_IMAGES;
         } else {
@@ -540,8 +540,8 @@ impl<'a> RefPointAlignmentProc<'a> {
             }
         }
     }
-    
-    
+
+
     fn calc_triangle_quality(&mut self) {
         let num_active_imgs = self.img_seq.get_active_img_count();
 
@@ -550,7 +550,7 @@ impl<'a> RefPointAlignmentProc<'a> {
             img_idx: usize,
             quality: f32
         }
-        
+
         let mut img_to_qual: Vec<ImgIdxToQuality> = vec![Default::default(); num_active_imgs];
 
         for tri in self.data.triangulation.get_triangles() {
@@ -573,14 +573,14 @@ impl<'a> RefPointAlignmentProc<'a> {
                         _ => () // else it is one of the fixed boundary points; does not affect triangle's quality
                     }
                 }
-    
+
                 if qsum < curr_tri_qual.qmin {
                     curr_tri_qual.qmin = qsum;
                 }
                 if qsum > curr_tri_qual.qmax {
                     curr_tri_qual.qmax = qsum;
                 }
-    
+
                 img_to_qual[img_idx] = ImgIdxToQuality{ img_idx, quality: qsum };
             }
 
@@ -590,12 +590,12 @@ impl<'a> RefPointAlignmentProc<'a> {
             for img_idx in 0..num_active_imgs {
                 curr_tri_qual.sorted_idx[img_to_qual[img_idx].img_idx] = img_idx;
             }
-            
+
             self.tri_quality.push(curr_tri_qual);
         }
     }
-    
-    
+
+
     /// Adds a fixed reference point (not tracked during processing).
     fn create_fixed_point(pos: Point, img_seq: &ImageSequence) -> ReferencePoint {
         ReferencePoint{
@@ -604,7 +604,7 @@ impl<'a> RefPointAlignmentProc<'a> {
             positions: vec![RefPtPosition{ pos, is_valid: true }; img_seq.get_active_img_count()],
             last_valid_pos_idx: Some(0),
             last_transl_vec_len: 0.0,
-            last_transl_vec_sqlen: 0.0 }   
+            last_transl_vec_sqlen: 0.0 }
     }
 
 
@@ -612,45 +612,45 @@ impl<'a> RefPointAlignmentProc<'a> {
     ///
     /// This way after triangulation the near-border points will not generate skinny triangles,
     /// which would result in locally degraded stack quality.
-    /// 
+    ///
     /// Example of triangulation without the additional points:
     ///
-    /// ``` 
+    /// ```
     ///  o                                                o
-    /// 
+    ///
     ///                  +--------------+
     ///                  |  *   *   *   |
     ///                  |              |<--images' intersection
     ///                  |              |
     ///                  +--------------+
-    /// 
-    /// 
-    /// 
+    ///
+    ///
+    ///
     ///                         o
-    /// 
-    /// ``` 
+    ///
+    /// ```
     ///       `o` = external fixed points added by `Triangulation.find_delaunay_triangulation()`
-    /// 
+    ///
     /// The internal near-border points (`*`) would generate skinny triangles with the upper (`o`) points.
     /// With additional fixed points:
     ///
-    /// ``` 
+    /// ```
     ///  o                                                o
-    /// 
+    ///
     ///                     o   o   o
-    /// 
+    ///
     ///                  +--------------+
     ///                o |  *   *   *   |   o
     ///                  |              |
     ///                o |              |   o
-    /// 
+    ///
     /// ```
     ///
     fn append_surrounding_fixed_points(
         ref_points: &mut Vec<ReferencePoint>,
         intersection: &Rect,
         img_seq: &mut ImageSequence) {
-    
+
         for i in 1 .. ADDITIONAL_FIXED_PTS_PER_BORDER + 1 {
             // Along top border
             ref_points.push(RefPointAlignmentProc::create_fixed_point(
@@ -669,7 +669,7 @@ impl<'a> RefPointAlignmentProc<'a> {
                 Point{ x: -(intersection.width as i32) / ADDITIONAL_FIXED_PT_OFFSET_DIV as i32,
                        y: (i as u32 * intersection.height) as i32 / (ADDITIONAL_FIXED_PTS_PER_BORDER + 1) as i32 },
                 &img_seq));
-            
+
             // Along right border
             ref_points.push(RefPointAlignmentProc::create_fixed_point(
                 Point{ x: (intersection.width + intersection.width / ADDITIONAL_FIXED_PT_OFFSET_DIV) as i32,
@@ -677,27 +677,27 @@ impl<'a> RefPointAlignmentProc<'a> {
                 &img_seq));
         }
     }
-        
-        
+
+
     /// Makes sure that for every triangle there is at least 1 image where all 3 vertices are "valid".
     fn ensure_tris_are_valid(&mut self) {
         let num_active_imgs = self.img_seq.get_active_img_count();
-    
+
         let triangles = self.data.triangulation.get_triangles();
-    
+
         for tri in triangles {
             let tri_v = [tri.v0, tri.v1, tri.v2];
             let ref_pts = &mut self.data.reference_pts;
-    
+
             // Best quality and associated img index where the triangle's vertices are not all "valid"
             let mut best_tri_qual = 0.0;
             let mut best_tri_qual_img_idx: Option<usize> = None;
-    
+
             for img_idx in 0..num_active_imgs {
                 if ref_pts[tri.v0].positions[img_idx].is_valid &&
                    ref_pts[tri.v1].positions[img_idx].is_valid &&
                    ref_pts[tri.v2].positions[img_idx].is_valid {
-                       
+
                     best_tri_qual_img_idx = None;
                     break;
                 } else {
@@ -714,7 +714,7 @@ impl<'a> RefPointAlignmentProc<'a> {
                     }
                 }
             }
-    
+
             match best_tri_qual_img_idx {
                 Some(best_idx) => {
                     // The triangle's vertices turned out not to be simultaneously "valid" in any image,
@@ -729,7 +729,7 @@ impl<'a> RefPointAlignmentProc<'a> {
             }
         }
     }
-        
+
 }
 
 
@@ -738,8 +738,8 @@ impl<'a> ProcessingPhase for RefPointAlignmentProc<'a> {
     {
         self.img_seq.get_curr_img()
     }
-    
-    
+
+
     fn step(&mut self) -> Result<(), ProcessingError> {
         match self.img_seq.seek_next() {
             Err(SeekResult::NoMoreImages) => {
@@ -752,7 +752,7 @@ impl<'a> ProcessingPhase for RefPointAlignmentProc<'a> {
 
         let img_idx = self.img_seq.get_curr_img_idx_within_active_subset();
 
-        let mut img = try!(self.img_seq.get_curr_img());
+        let mut img = self.img_seq.get_curr_img()?;
         if img.get_pixel_format() != PixelFormat::Mono8 {
             img = img.convert_pix_fmt(PixelFormat::Mono8, Some(DemosaicMethod::Simple));
         }
@@ -761,7 +761,7 @@ impl<'a> ProcessingPhase for RefPointAlignmentProc<'a> {
             &img, img_idx,
             &self.img_align_data.get_intersection(),
             &self.img_align_data.get_image_ofs()[img_idx]);
-    
+
         Ok(())
-    }   
+    }
 }

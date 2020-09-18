@@ -1,7 +1,7 @@
-// 
+//
 // libskry_r - astronomical image stacking
 // Copyright (c) 2017 Filip Szczerek <ga.software@yahoo.com>
-// 
+//
 // This project is licensed under the terms of the MIT license
 // (see the LICENSE file for details).
 //
@@ -64,13 +64,13 @@ pub struct BmpPalette {
 
 
 pub fn convert_bmp_palette(num_used_pal_entries: u32, bmp_pal: &BmpPalette) -> Palette {
-    let mut pal = Palette::default(); 
+    let mut pal = Palette::default();
     for i in 0..num_used_pal_entries as usize {
         pal.pal[3*i + 0] = bmp_pal.pal[i*4 + 2];
         pal.pal[3*i + 1] = bmp_pal.pal[i*4 + 1];
         pal.pal[3*i + 2] = bmp_pal.pal[i*4 + 0];
     }
-    
+
     pal
 }
 
@@ -80,11 +80,11 @@ pub fn is_mono8_palette(palette: &Palette) -> bool {
         if palette.pal[3*i + 0] as usize != i ||
            palette.pal[3*i + 1] as usize != i ||
            palette.pal[3*i + 2] as usize != i {
-               
+
             return false;
         }
     }
-    
+
     true
 }
 
@@ -104,12 +104,10 @@ impl From<io::Error> for BmpError {
 
 /// Returns metadata (width, height, ...) without reading the pixel data.
 pub fn get_bmp_metadata(file_name: &str) -> Result<(u32, u32, PixelFormat, Option<Palette>), BmpError> {
-    let mut file = try!(OpenOptions::new().read(true)
-                                          .write(false)
-                                          .open(file_name));
+    let mut file = OpenOptions::new().read(true).write(false).open(file_name)?;
 
-    let (img_width, img_height, _, pix_fmt, palette) = try!(get_bmp_metadata_priv(&mut file));
-    
+    let (img_width, img_height, _, pix_fmt, palette) = get_bmp_metadata_priv(&mut file)?;
+
     Ok((img_width, img_height, pix_fmt, palette))
 }
 
@@ -119,11 +117,11 @@ pub fn get_bmp_metadata(file_name: &str) -> Result<(u32, u32, PixelFormat, Optio
 /// After return, `file`'s cursor will be positioned at the beginning of pixel data.
 ///
 fn get_bmp_metadata_priv(file: &mut File) -> Result<(u32, u32, usize, PixelFormat, Option<Palette>), BmpError> {
-    let file_hdr: BitmapFileHeader = try!(utils::read_struct(file));
-    let info_hdr: BitmapInfoHeader = try!(utils::read_struct(file));
+    let file_hdr: BitmapFileHeader = utils::read_struct(file)?;
+    let info_hdr: BitmapInfoHeader = utils::read_struct(file)?;
 
     // Fields in a BMP are always little-endian, so remember to swap them
-    
+
     let bits_per_pixel = u16::from_le(info_hdr.bit_count);
     let img_width = i32::from_le(info_hdr.width) as u32;
     let img_height = i32::from_le(info_hdr.height) as u32;
@@ -133,7 +131,7 @@ fn get_bmp_metadata_priv(file: &mut File) -> Result<(u32, u32, usize, PixelForma
        u16::from_le(info_hdr.planes) != 1 ||
        bits_per_pixel != 8 && bits_per_pixel != 24 && bits_per_pixel != 32 ||
        u32::from_le(info_hdr.compression) != BI_RGB && u32::from_le(info_hdr.compression) != BI_BITFIELDS {
-           
+
         return Err(BmpError::UnsupportedFormat);
     }
 
@@ -151,15 +149,15 @@ fn get_bmp_metadata_priv(file: &mut File) -> Result<(u32, u32, usize, PixelForma
 
     if pix_fmt == PixelFormat::Pal8 {
         let mut num_used_pal_entries = u32::from_le(info_hdr.clr_used);
-        
+
         if num_used_pal_entries == 0 {
             num_used_pal_entries = 256;
         }
 
         // Seek to the beginning of palette
-        try!(file.seek(SeekFrom::Start((size_of::<BitmapFileHeader>() + u32::from_le(info_hdr.size) as usize) as u64)));
+        file.seek(SeekFrom::Start((size_of::<BitmapFileHeader>() + u32::from_le(info_hdr.size) as usize) as u64))?;
 
-        let bmp_palette: BmpPalette = try!(utils::read_struct(file));
+        let bmp_palette: BmpPalette = utils::read_struct(file)?;
 
         // Convert to an RGB-order palette
         let palette = convert_bmp_palette(num_used_pal_entries, &bmp_palette);
@@ -167,29 +165,27 @@ fn get_bmp_metadata_priv(file: &mut File) -> Result<(u32, u32, usize, PixelForma
         if is_mono8_palette(&palette) {
             pix_fmt = PixelFormat::Mono8;
         }
-        
+
         pal = Some(palette);
     }
-    
-    try!(file.seek(SeekFrom::Start(u32::from_le(file_hdr.off_bits) as u64)));    
-    
+
+    file.seek(SeekFrom::Start(u32::from_le(file_hdr.off_bits) as u64))?;
+
     Ok((img_width, img_height, bits_per_pixel as usize, pix_fmt, pal))
 }
 
 
 pub fn load_bmp(file_name: &str) -> Result<Image, BmpError> {
 
-    let mut file = try!(OpenOptions::new().read(true)
-                                          .write(false)
-                                          .open(file_name));
+    let mut file = OpenOptions::new().read(true).write(false).open(file_name)?;
 
-    let (img_width, img_height, bits_per_pix, pix_fmt, palette) = try!(get_bmp_metadata_priv(&mut file));
+    let (img_width, img_height, bits_per_pix, pix_fmt, palette) = get_bmp_metadata_priv(&mut file)?;
 
     let src_bytes_per_pixel = bits_per_pix / 8;
 
     let dest_bytes_per_line = img_width as usize * bytes_per_pixel(pix_fmt);
     let dest_byte_count = img_height as usize * dest_bytes_per_line;
-    
+
     let mut pixels = utils::alloc_uninitialized(dest_byte_count);
 
     if [PixelFormat::Pal8, PixelFormat::Mono8].contains(&pix_fmt) {
@@ -198,10 +194,10 @@ pub fn load_bmp(file_name: &str) -> Result<Image, BmpError> {
 
         let mut y = img_height - 1;
         loop {
-            try!(file.read_exact(&mut pixels[range!(y as usize * dest_bytes_per_line, dest_bytes_per_line)]));
+            file.read_exact(&mut pixels[range!(y as usize * dest_bytes_per_line, dest_bytes_per_line)])?;
 
             if skip > 0 {
-                try!(file.seek(SeekFrom::Current(skip as i64)));
+                file.seek(SeekFrom::Current(skip as i64))?;
             }
 
             if y == 0 {
@@ -220,7 +216,7 @@ pub fn load_bmp(file_name: &str) -> Result<Image, BmpError> {
         loop {
             let dest_line = &mut pixels[range!(y as usize * dest_bytes_per_line, dest_bytes_per_line)];
 
-            try!(file.read_exact(&mut src_line));
+            file.read_exact(&mut src_line)?;
 
             if src_bytes_per_pixel == 3 {
                 // Rearrange the channels to RGB order
@@ -240,7 +236,7 @@ pub fn load_bmp(file_name: &str) -> Result<Image, BmpError> {
             }
 
             if skip > 0 {
-                try!(file.seek(SeekFrom::Current(skip as i64)));
+                file.seek(SeekFrom::Current(skip as i64))?;
             }
 
             if y == 0 {
@@ -257,11 +253,11 @@ pub fn load_bmp(file_name: &str) -> Result<Image, BmpError> {
 
 pub fn save_bmp(img: &Image, file_name: &str) -> Result<(), BmpError> {
     let pix_fmt = img.get_pixel_format();
-    
+
     if ![PixelFormat::Pal8, PixelFormat::RGB8, PixelFormat::Mono8].contains(&pix_fmt) {
         return Err(BmpError::UnsupportedFormat);
     }
-    
+
     let width = img.get_width();
     let height = img.get_height();
     let bytes_per_pix = bytes_per_pixel(pix_fmt);
@@ -282,7 +278,7 @@ pub fn save_bmp(img: &Image, file_name: &str) -> Result<(), BmpError> {
         reserved2: 0,
         off_bits:  u32::to_le(pix_data_offs as u32)
     };
-    
+
     let bmih = BitmapInfoHeader{
         size:             u32::to_le(size_of::<BitmapInfoHeader>() as u32),
         width:            i32::to_le(width as i32),
@@ -297,14 +293,11 @@ pub fn save_bmp(img: &Image, file_name: &str) -> Result<(), BmpError> {
         clr_important:    u32::to_le(0)
     };
 
-    let mut file = try!(OpenOptions::new().read(false)
-                                          .write(true)
-                                          .create(true)
-                                          .open(file_name));
+    let mut file = OpenOptions::new().read(false).write(true).create(true).open(file_name)?;
 
-    try!(utils::write_struct(&bmfh, &mut file));
-    try!(utils::write_struct(&bmih, &mut file));
-    
+    utils::write_struct(&bmfh, &mut file)?;
+    utils::write_struct(&bmih, &mut file)?;
+
     if [PixelFormat::Pal8, PixelFormat::Mono8].contains(&pix_fmt) {
         let mut bmp_palette = BmpPalette::default();
 
@@ -326,18 +319,18 @@ pub fn save_bmp(img: &Image, file_name: &str) -> Result<(), BmpError> {
             }
         }
 
-        try!(utils::write_struct(&bmp_palette, &mut file));
+        utils::write_struct(&bmp_palette, &mut file)?;
     }
 
     let pix_bytes_per_line = width as usize * bytes_per_pix;
     let line_padding = vec![0; bmp_line_width - pix_bytes_per_line];
     let mut bmp_line = utils::alloc_uninitialized(pix_bytes_per_line);
-    
+
     for i in 0..height {
         let src_line = img.get_line_raw(height - i - 1);
 
         if [PixelFormat::Pal8, PixelFormat::Mono8].contains(&pix_fmt) {
-            try!(file.write_all(&src_line));
+            file.write_all(&src_line)?;
         } else {
             // Rearrange the channels to BGR order
             for x in 0..width as usize {
@@ -345,10 +338,10 @@ pub fn save_bmp(img: &Image, file_name: &str) -> Result<(), BmpError> {
                 bmp_line[x*3 + 1] = src_line[x*3 + 1];
                 bmp_line[x*3 + 2] = src_line[x*3 + 0];
             }
-            try!(file.write_all(&bmp_line));
+            file.write_all(&bmp_line)?;
         }
         if !line_padding.is_empty() {
-            try!(file.write_all(&line_padding));
+            file.write_all(&line_padding)?;
         }
     }
 

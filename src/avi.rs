@@ -1,7 +1,7 @@
-// 
+//
 // libskry_r - astronomical image stacking
 // Copyright (c) 2017 Filip Szczerek <ga.software@yahoo.com>
-// 
+//
 // This project is licensed under the terms of the MIT license
 // (see the LICENSE file for details).
 //
@@ -111,10 +111,10 @@ struct AviMainHeader {
 struct AviOldIndex {
     chunk_id: FourCC,
     flags: u32,
-    
+
     /// Offset of frame contents counted from the beginning of the `movi` list's `list_type` field OR absolute file offset.
     offset: u32,
-    
+
     frame_size: u32
 }
 
@@ -165,7 +165,7 @@ fn is_dib(avi_pix_fmt: AviPixelFormat) -> bool {
         AviPixelFormat::DibRGB8 |
         AviPixelFormat::DibPal8 |
         AviPixelFormat::DibMono8 => true,
-        
+
         _ => false
     }
 }
@@ -182,29 +182,29 @@ fn avi_to_image_pix_fmt(avi_pix_fmt: AviPixelFormat) -> PixelFormat {
 
 pub struct AviFile {
     file_name: String,
-    
+
     /// Becomes empty after calling `deactivate()`.
     file: Option<File>,
-    
+
     /// Absolute file offsets (point to each frame's `AVI_chunk`).
     frame_offsets: Vec<u64>,
 
     /// Valid for an AVI with palette.
     palette: Option<Palette>,
-    
+
     avi_pix_fmt: AviPixelFormat,
-    
+
     num_images: usize,
-    
+
     width: u32,
     height: u32
 }
 
 
 impl AviFile {
-    pub fn new(file_name: &str) -> Result<Box<ImageProvider>, AviError> {
+    pub fn new(file_name: &str) -> Result<Box<dyn ImageProvider>, AviError> {
         // Expected AVI file structure:
-        // 
+        //
         //     RIFF/AVI                         // AVI_file_header
         //     LIST: hdrl
         //     | avih                           // AVI_main_header
@@ -237,43 +237,43 @@ impl AviFile {
         let mut list: AviList;
         let mut last_chunk_pos: u64;
         let mut last_chunk_size: u32;
-        
-        let mut file = try!(OpenOptions::new().read(true)
-                                              .write(false)
-                                              .open(file_name));
 
-        let fheader: AviFileHeader = try!(utils::read_struct(&mut file));
-        
+        let mut file = OpenOptions::new().read(true)
+                                         .write(false)
+                                         .open(file_name)?;
+
+        let fheader: AviFileHeader = utils::read_struct(&mut file)?;
+
         if !fcc_equals(&fheader.riff, "RIFF".as_bytes()) ||
            !fcc_equals(&fheader.avi, "AVI ".as_bytes()) {
-               
-            return Err(AviError::MalformedFile);           
+
+            return Err(AviError::MalformedFile);
         }
 
         let header_list_pos = file.seek(SeekFrom::Current(0)).unwrap();
-        let header_list: AviList = try!(utils::read_struct(&mut file));
+        let header_list: AviList = utils::read_struct(&mut file)?;
 
         if !fcc_equals(&header_list.list, "LIST".as_bytes()) ||
            !fcc_equals(&header_list.list_type, "hdrl".as_bytes()) {
-               
+
             return Err(AviError::MalformedFile);
         }
 
         // Returns on error
-        macro_rules! read_chunk { () => {        
+        macro_rules! read_chunk { () => {
             last_chunk_pos = file.seek(SeekFrom::Current(0)).unwrap();
-            chunk = try!(utils::read_struct(&mut file));
+            chunk = utils::read_struct(&mut file)?;
             last_chunk_size = u32::from_le(chunk.ck_size);
         }};
-        
+
         read_chunk!();
 
         if !fcc_equals(&chunk.ck_id, "avih".as_bytes()) {
             return Err(AviError::MalformedFile);
-        } 
+        }
 
-        let avi_header: AviMainHeader = try!(utils::read_struct(&mut file));
-    
+        let avi_header: AviMainHeader = utils::read_struct(&mut file)?;
+
         // This may be zero; if so, we'll use the stream header's `length` field
         let mut num_images = u32::from_le(avi_header.total_frames) as usize;
         let width = u32::from_le(avi_header.width);
@@ -282,25 +282,27 @@ impl AviFile {
         if u32::from_le(avi_header.flags) & AVIF_HAS_INDEX == 0 {
             return Err(AviError::IndexNotPresent);
         }
-        
+
         macro_rules! seek_to_next_list_or_chunk { () => {
-            try!(file.seek(SeekFrom::Start(last_chunk_pos +
-                                           last_chunk_size as u64 +
-                                           size_of_val(&chunk.ck_id) as u64 +
-                                           size_of_val(&chunk.ck_size) as u64)));
+            file.seek(SeekFrom::Start(
+                last_chunk_pos +
+                last_chunk_size as u64 +
+                size_of_val(&{let x = chunk.ck_id; x}) as u64 +
+                size_of_val(&{let x = chunk.ck_size; x}) as u64)
+            )?;
         }};
-        
+
         seek_to_next_list_or_chunk!();
 
         // Read the stream list
-        list = try!(utils::read_struct(&mut file));
+        list = utils::read_struct(&mut file)?;
 
         if !fcc_equals(&list.list, "LIST".as_bytes()) ||
            !fcc_equals(&list.list_type, "strl".as_bytes()) {
-               
+
             return Err(AviError::MalformedFile);
-        } 
-    
+        }
+
         // Read the stream header
         read_chunk!();
 
@@ -308,11 +310,11 @@ impl AviFile {
             return Err(AviError::MalformedFile);
         }
 
-        let mut stream_header: AviStreamHeader = try!(utils::read_struct(&mut file));
+        let mut stream_header: AviStreamHeader = utils::read_struct(&mut file)?;
 
         if !fcc_equals(&stream_header.fcc_type, "vids".as_bytes()) {
             return Err(AviError::MalformedFile);
-        } 
+        }
 
         if fcc_equals(&stream_header.fcc_handler, "\0\0\0".as_bytes()) {
             // Empty 'fcc_handler' means DIB by default
@@ -321,15 +323,15 @@ impl AviFile {
             stream_header.fcc_handler[2] = 'B' as u8;
             stream_header.fcc_handler[3] = ' ' as u8;
         }
-    
+
         if !fcc_equals(&stream_header.fcc_handler, "DIB ".as_bytes()) &&
            !fcc_equals(&stream_header.fcc_handler, "Y800".as_bytes()) &&
            !fcc_equals(&stream_header.fcc_handler, "Y8  ".as_bytes()) {
-               
+
             return Err(AviError::UnsupportedFormat);
         }
         let is_dib = fcc_equals(&stream_header.fcc_handler, "DIB ".as_bytes());
-    
+
         if num_images == 0 { num_images = stream_header.length as usize; }
 
         // Seek to and read the stream format
@@ -340,111 +342,113 @@ impl AviFile {
             return Err(AviError::MalformedFile);
         }
 
-        let bmp_hdr: bmp::BitmapInfoHeader = try!(utils::read_struct(&mut file));
-    
+        let bmp_hdr: bmp::BitmapInfoHeader = utils::read_struct(&mut file)?;
+
         let palette: Option<Palette> = None;
 
         if is_dib && u32::from_le(bmp_hdr.compression) != bmp::BI_BITFIELDS && u32::from_le(bmp_hdr.compression) != bmp::BI_RGB ||
             u16::from_le(bmp_hdr.planes) != 1 ||
             u16::from_le(bmp_hdr.bit_count) != 8 && u16::from_le(bmp_hdr.bit_count) != 24 {
-                
+
             return Err(AviError::UnsupportedFormat);
         }
-        
+
         let avi_pix_fmt;
-        
+
         if is_dib && u16::from_le(bmp_hdr.bit_count) == 8 {
-            let bmp_palette: bmp::BmpPalette = try!(utils::read_struct(&mut file));
-            
+            let bmp_palette: bmp::BmpPalette = utils::read_struct(&mut file)?;
+
             let mut clr_used = u32::from_le(bmp_hdr.clr_used);
             if clr_used == 0 { clr_used = 256; }
             let palette = Some(bmp::convert_bmp_palette(clr_used, &bmp_palette));
-    
+
             avi_pix_fmt = if bmp::is_mono8_palette(palette.iter().next().unwrap()) { AviPixelFormat::DibMono8 } else { AviPixelFormat::DibPal8 }
         } else if is_dib && u16::from_le(bmp_hdr.bit_count) == 24 {
             avi_pix_fmt = AviPixelFormat::DibRGB8;
         } else {
             avi_pix_fmt = AviPixelFormat::Y800;
         }
-    
+
         // Jump to the location immediately after `hdrl`
-        try!(file.seek(SeekFrom::Start(header_list_pos +
-                                       u32::from_le(header_list.list_size) as u64 +
-                                       size_of_val(&header_list.list) as u64 +
-                                       size_of_val(&header_list.list_size) as u64)));
+        file.seek(SeekFrom::Start(
+            header_list_pos +
+            u32::from_le(header_list.list_size) as u64 +
+            size_of_val(&header_list.list) as u64 +
+            size_of_val(&{let x = header_list.list_size; x}) as u64)
+        )?;
 
         // Skip any additional fragments (e.g. `JUNK` chunks)
         let mut stored_pos: u64;
         loop {
             stored_pos = file.seek(SeekFrom::Current(0)).unwrap();
 
-            let fragment: AviFragment = try!(utils::read_struct(&mut file));
-    
+            let fragment: AviFragment = utils::read_struct(&mut file)?;
+
             if fcc_equals(&fragment.fcc, "LIST".as_bytes()) {
-                let list_type: FourCC = try!(utils::read_struct(&mut file));
-    
+                let list_type: FourCC = utils::read_struct(&mut file)?;
+
                 // Found a list; if it is the `movi` list, move the file pointer back;
                 // the list will be re-read after the current `while` loop
                 if fcc_equals(&list_type, "movi".as_bytes()) {
-                    try!(file.seek(SeekFrom::Start(stored_pos)));
+                    file.seek(SeekFrom::Start(stored_pos))?;
                     break;
                 } else {
                     // Not the `movi` list; skip it.
                     // Must rewind back by length of the `size` field,
                     // because in a list it is not counted in `size`.
-                    try!(file.seek(SeekFrom::Current(-(size_of_val(&fragment.size) as i64))));
+                    file.seek(SeekFrom::Current(-(size_of_val(&{let x = fragment.size; x}) as i64)))?;
                 }
             }
-    
+
             // Skip the current fragment, whatever it is
-            try!(file.seek(SeekFrom::Current(u32::from_le(fragment.size) as i64)));
+            file.seek(SeekFrom::Current(u32::from_le(fragment.size) as i64))?;
         }
 
-        list = try!(utils::read_struct(&mut file));    
-    
+        list = utils::read_struct(&mut file)?;
+
         if !fcc_equals(&list.list, "LIST".as_bytes()) ||
            !fcc_equals(&list.list_type, "movi".as_bytes()) {
-               
+
             return Err(AviError::MalformedFile);
         }
 
         let frame_chunks_start_ofs = file.seek(SeekFrom::Current(0)).unwrap() - size_of_val(&list.list_type) as u64;
-    
+
         // Jump to the old-style AVI index
-        try!(file.seek(SeekFrom::Current(u32::from_le(list.list_size) as i64 - size_of_val(&list.list_size) as i64)));
+        file.seek(SeekFrom::Current(u32::from_le(list.list_size) as i64 - size_of_val(&{ let x = list.list_size; x}) as i64))?;
 
         read_chunk!();
 
         if !fcc_equals(&chunk.ck_id, "idx1".as_bytes()) ||
            (u32::from_le(chunk.ck_size) as usize) < num_images * size_of::<AviOldIndex>() {
-               
+
             return Err(AviError::MalformedFile);
         }
-    
+
         // Index may contain bogus entries, this will make it longer than num_images * sizeof(AviOldIndex)
         let index_length = u32::from_le(chunk.ck_size);
         if index_length % size_of::<AviOldIndex>() as u32 != 0 {
-            
+
             return Err(AviError::MalformedFile);
-        } 
-    
+        }
+
         // Absolute byte offsets of each frame's contents in the file
         let mut frame_offsets = Vec::<u64>::with_capacity(num_images);
-    
+
         // We have just checked it is divisible
         let mut avi_old_index = utils::alloc_uninitialized::<AviOldIndex>(index_length as usize / size_of::<AviOldIndex>());
-        try!(file.read_exact( unsafe { slice::from_raw_parts_mut(avi_old_index.as_mut_slice().as_ptr() as *mut u8, index_length as usize) }));
-    
+        file.read_exact( unsafe { slice::from_raw_parts_mut(avi_old_index.as_mut_slice().as_ptr() as *mut u8, index_length as usize) })?;
+
         let mut line_byte_count = width as usize * bytes_per_pixel(avi_to_image_pix_fmt(avi_pix_fmt));
         if is_dib { line_byte_count = upmult!(line_byte_count, 4); }
-        
+
         let frame_byte_count = line_byte_count * height as usize;
 
         for entry in &avi_old_index {
             // Ignore bogus entries (they may have "7Fxx" as their ID)
             if fcc_equals(&entry.chunk_id, "00db".as_bytes()) ||
                fcc_equals(&entry.chunk_id, "00dc".as_bytes()) {
-                   
+
                 if u32::from_le(entry.frame_size) as usize != frame_byte_count {
                     return Err(AviError::MalformedFile);
                 } else {
@@ -452,17 +456,17 @@ impl AviFile {
                 }
             }
         }
-    
+
         // We assumed the frame offsets in the index were relative to the `movi` list; however, they may be actually
         // absolute file offsets. Check and update the offsets array.
-        
+
         // Try to read the first frame's preamble
-        try!(file.seek(SeekFrom::Start(u32::from_le(avi_old_index[0].offset) as u64)));
+        file.seek(SeekFrom::Start(u32::from_le(avi_old_index[0].offset) as u64))?;
         read_chunk!();
-                
+
         if (fcc_equals(&chunk.ck_id, "00db".as_bytes()) || fcc_equals(&chunk.ck_id, "00dc".as_bytes())) &&
            u32::from_le(chunk.ck_size) as usize == frame_byte_count {
-               
+
             // Indeed, index frame offsets are absolute; must correct the values
             for ofs in &mut frame_offsets {
                 *ofs -= frame_chunks_start_ofs;
@@ -486,33 +490,36 @@ impl AviFile {
 impl ImageProvider for AviFile {
     fn get_img(&mut self, idx: usize) -> Result<Image, ImageError> {
         if self.file.is_none() {
-            self.file = Some(try!(OpenOptions::new().read(true)
-                                                    .write(false)
-                                                    .open(&self.file_name)));
+            self.file = Some(
+                OpenOptions::new()
+                    .read(true)
+                    .write(false)
+                    .open(&self.file_name)?
+            );
         }
 
         let file: &mut File = self.file.iter_mut().next().unwrap();
-         
-        try!(file.seek(SeekFrom::Start(self.frame_offsets[idx])));
-        
-        let chunk: AviChunk = try!(utils::read_struct(file));
-        
+
+        file.seek(SeekFrom::Start(self.frame_offsets[idx]))?;
+
+        let chunk: AviChunk = utils::read_struct(file)?;
+
         let mut src_line_byte_count = self.width as usize * bytes_per_pixel(avi_to_image_pix_fmt(self.avi_pix_fmt));
-        let is_dib = is_dib(self.avi_pix_fmt); 
-        if is_dib { src_line_byte_count = upmult!(src_line_byte_count, 4); } 
+        let is_dib = is_dib(self.avi_pix_fmt);
+        if is_dib { src_line_byte_count = upmult!(src_line_byte_count, 4); }
 
         if !fcc_equals(&chunk.ck_id, "00db".as_bytes()) && !fcc_equals(&chunk.ck_id, "00dc".as_bytes()) ||
             u32::from_le(chunk.ck_size) as usize != src_line_byte_count * self.height as usize {
-                
+
             return Err(ImageError::AviError(AviError::InvalidFrame(idx)));
         }
-    
-        let mut img = Image::new(self.width, self.height, avi_to_image_pix_fmt(self.avi_pix_fmt), self.palette.clone(), false); 
+
+        let mut img = Image::new(self.width, self.height, avi_to_image_pix_fmt(self.avi_pix_fmt), self.palette.clone(), false);
 
         let mut src_line = utils::alloc_uninitialized::<u8>(src_line_byte_count);
 
         for y in 0..self.height {
-            try!(file.read_exact(&mut src_line));
+            file.read_exact(&mut src_line)?;
 
             let bpl = img.get_bytes_per_line();
 
@@ -533,20 +540,20 @@ impl ImageProvider for AviFile {
             }
         }
 
-        Ok(img)        
+        Ok(img)
     }
-    
-    
+
+
     fn get_img_metadata(&self, _: usize) -> Result<(u32, u32, PixelFormat, Option<Palette>), ImageError> {
-        Ok((self.width, self.height, avi_to_image_pix_fmt(self.avi_pix_fmt), self.palette.clone())) 
+        Ok((self.width, self.height, avi_to_image_pix_fmt(self.avi_pix_fmt), self.palette.clone()))
     }
-    
+
 
     fn img_count(&self) -> usize {
         self.num_images
     }
-    
-    
+
+
     fn deactivate(&mut self) {
         self.file = None;
     }

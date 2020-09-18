@@ -105,7 +105,7 @@ fn cnd_swap_16_in_32(x: u32, do_swap: bool) -> u32 {
         ((x & 0xFF) << 8) | (x >> 8)
     } else {
         x
-    }    
+    }
 }
 
 
@@ -119,21 +119,21 @@ fn cnd_swap_16_in_32(x: u32, do_swap: bool) -> u32 {
 fn parse_tag_bits_per_sample(file: &mut File,
                              tiff_field: &TiffField,
                              endianess_diff: bool) -> Result<usize, TiffError> {
-                                 
+
     assert!(tiff_field.tag == TAG_BITS_PER_SAMPLE);
     assert!(tiff_field.ftype == TAG_TYPE_WORD);
 
     let bits_per_sample;
-    
+
     if tiff_field.count == 1 {
         return Ok(cnd_swap!(tiff_field.value, endianess_diff) as usize);
     } else {
         // Some files may have as many "bits per sample" values specified
         // as there are channels. Make sure they are all the same.
-        
-        try!(file.seek(SeekFrom::Start(tiff_field.value as u64)));
 
-        let field_buf = try!(utils::read_vec::<u16>(file, tiff_field.count as usize));
+        file.seek(SeekFrom::Start(tiff_field.value as u64));
+
+        let field_buf = utils::read_vec::<u16>(file, tiff_field.count as usize)?;
 
         let first = field_buf[0];
         for val in &field_buf {
@@ -174,20 +174,20 @@ fn preprocess_tiff_field(tiff_field: &mut TiffField, endianess_diff: bool) {
 }
 
 
-fn determine_pixel_format(samples_per_pixel: usize, bits_per_sample: usize) -> PixelFormat { 
+fn determine_pixel_format(samples_per_pixel: usize, bits_per_sample: usize) -> PixelFormat {
     match samples_per_pixel {
         1 => match bits_per_sample {
                  8 => PixelFormat::Mono8,
                  16 => PixelFormat::Mono16,
                  _ => panic!()
              },
-                      
+
         3 => match bits_per_sample {
                  8 => PixelFormat::RGB8,
                  16 => PixelFormat::RGB16,
                  _ => panic!()
              },
-        
+
         _ => panic!()
     }
 }
@@ -197,7 +197,7 @@ fn validate_tiff_format(samples_per_pixel: usize, photometric_interpretation: u3
     if samples_per_pixel == 1 && photometric_interpretation != PHMET_BLACK_IS_ZERO && photometric_interpretation != PHMET_WHITE_IS_ZERO ||
        samples_per_pixel == 3 && photometric_interpretation != PHMET_RGB ||
        samples_per_pixel != 1 && samples_per_pixel != 3 {
-           
+
         Err(TiffError::UnsupportedPixelFormat)
     } else {
         Ok(())
@@ -206,22 +206,20 @@ fn validate_tiff_format(samples_per_pixel: usize, photometric_interpretation: u3
 
 
 pub fn load_tiff(file_name: &str) -> Result<Image, TiffError> {
-    let mut file = try!(OpenOptions::new().read(true)
-                                          .write(false)
-                                          .open(file_name));
+    let mut file = OpenOptions::new().read(true).write(false).open(file_name)?;
 
-    let tiff_header: TiffHeader = try!(utils::read_struct(&mut file));
+    let tiff_header: TiffHeader = utils::read_struct(&mut file)?;
 
     let endianess_diff = utils::is_machine_big_endian() && tiff_header.id == INTEL_BYTE_ORDER;
 
     if cnd_swap!(tiff_header.version, endianess_diff) != TIFF_VERSION {
         return Err(TiffError::UnknownVersion);
-    } 
+    }
 
     // Seek to the first TIFF directory
-    try!(file.seek(SeekFrom::Start(cnd_swap!(tiff_header.dir_offset, endianess_diff) as u64)));
+    file.seek(SeekFrom::Start(cnd_swap!(tiff_header.dir_offset, endianess_diff) as u64))?;
 
-    let mut num_dir_entries: u16 = try!(utils::read_struct(&mut file));
+    let mut num_dir_entries: u16 = utils::read_struct(&mut file)?;
     num_dir_entries = cnd_swap!(num_dir_entries, endianess_diff);
 
     // All the `Option`s below need to be read; if any is missing, we will panic
@@ -236,10 +234,10 @@ pub fn load_tiff(file_name: &str) -> Result<Image, TiffError> {
 
     let mut next_field_pos = file.seek(SeekFrom::Current(0)).unwrap();
     for _ in 0..num_dir_entries {
-        try!(file.seek(SeekFrom::Start(next_field_pos)));
+        file.seek(SeekFrom::Start(next_field_pos))?;
 
-        let mut tiff_field: TiffField = try!(utils::read_struct(&mut file));
-        
+        let mut tiff_field: TiffField = utils::read_struct(&mut file)?;
+
         next_field_pos = file.seek(SeekFrom::Current(0)).unwrap();
 
         preprocess_tiff_field(&mut tiff_field, endianess_diff);
@@ -249,7 +247,7 @@ pub fn load_tiff(file_name: &str) -> Result<Image, TiffError> {
 
             TAG_IMAGE_HEIGHT => img_height = Some(tiff_field.value),
 
-            TAG_BITS_PER_SAMPLE => bits_per_sample = Some(try!(parse_tag_bits_per_sample(&mut file, &tiff_field, endianess_diff))),
+            TAG_BITS_PER_SAMPLE => bits_per_sample = Some(parse_tag_bits_per_sample(&mut file, &tiff_field, endianess_diff)?),
 
             TAG_COMPRESSION => if tiff_field.value != NO_COMPRESSION { return Err(TiffError::CompressionNotSupported); },
 
@@ -260,8 +258,8 @@ pub fn load_tiff(file_name: &str) -> Result<Image, TiffError> {
                 if num_strips.unwrap() == 1 {
                     strip_offsets = Some(vec![tiff_field.value]);
                 } else {
-                    try!(file.seek(SeekFrom::Start(tiff_field.value as u64)));
-                    strip_offsets = Some(try!(utils::read_vec(&mut file, num_strips.unwrap())));
+                    file.seek(SeekFrom::Start(tiff_field.value as u64))?;
+                    strip_offsets = Some(utils::read_vec(&mut file, num_strips.unwrap())?);
                     for sofs in strip_offsets.iter_mut().next().unwrap() {
                         *sofs = cnd_swap!(*sofs, endianess_diff);
                     }
@@ -283,28 +281,28 @@ pub fn load_tiff(file_name: &str) -> Result<Image, TiffError> {
         rows_per_strip = Some(*img_height.iter().next().unwrap() as usize	);
     }
 
-    try!(validate_tiff_format(samples_per_pixel.unwrap(), photometric_interpretation));
+    validate_tiff_format(samples_per_pixel.unwrap(), photometric_interpretation)?;
 
-    let pix_fmt = determine_pixel_format(samples_per_pixel.unwrap(), bits_per_sample.unwrap()); 
+    let pix_fmt = determine_pixel_format(samples_per_pixel.unwrap(), bits_per_sample.unwrap());
 
     let bytes_per_line = img_width.unwrap() as usize * bytes_per_pixel(pix_fmt);
     let mut pixels = utils::alloc_uninitialized::<u8>(img_height.unwrap() as usize * bytes_per_line as usize);
 
     let mut curr_line = 0;
     for strip_ofs in strip_offsets.unwrap() {
-        try!(file.seek(SeekFrom::Start(strip_ofs as u64)));
+        file.seek(SeekFrom::Start(strip_ofs as u64))?;
 
         let mut strip_row = 0;
         while strip_row < rows_per_strip.unwrap() && curr_line < img_height.unwrap() {
             let img_line = &mut pixels[range!(curr_line as usize * bytes_per_line, bytes_per_line)];
-            
-            try!(file.read_exact(img_line));
+
+            file.read_exact(img_line)?;
 
             strip_row += 1;
             curr_line += 1;
         }
     }
-    
+
     let mut img = Image::new_from_pixels(img_width.unwrap(), img_height.unwrap(), pix_fmt, None, pixels);
 
     if photometric_interpretation == PHMET_WHITE_IS_ZERO {
@@ -315,33 +313,31 @@ pub fn load_tiff(file_name: &str) -> Result<Image, TiffError> {
             _ => panic!()
         }
     }
-    
+
     if (pix_fmt == PixelFormat::Mono16 || pix_fmt == PixelFormat::RGB16) && endianess_diff {
         utils::swap_words16(&mut img);
     }
-    
+
     Ok(img)
 }
 
 
 /// Returns metadata (width, height, ...) without reading the pixel data.
 pub fn get_tiff_metadata(file_name: &str) -> Result<(u32, u32, PixelFormat, Option<Palette>), TiffError> {
-    let mut file = try!(OpenOptions::new().read(true)
-                                          .write(false)
-                                          .open(file_name));
+    let mut file = OpenOptions::new().read(true).write(false).open(file_name)?;
 
-    let tiff_header: TiffHeader = try!(utils::read_struct(&mut file));
+    let tiff_header: TiffHeader = utils::read_struct(&mut file)?;
 
     let endianess_diff = utils::is_machine_big_endian() && tiff_header.id == INTEL_BYTE_ORDER;
 
     if cnd_swap!(tiff_header.version, endianess_diff) != TIFF_VERSION {
         return Err(TiffError::UnknownVersion);
-    } 
+    }
 
     // Seek to the first TIFF directory
-    try!(file.seek(SeekFrom::Start(cnd_swap!(tiff_header.dir_offset, endianess_diff) as u64)));
+    file.seek(SeekFrom::Start(cnd_swap!(tiff_header.dir_offset, endianess_diff) as u64))?;
 
-    let mut num_dir_entries: u16 = try!(utils::read_struct(&mut file));
+    let mut num_dir_entries: u16 = utils::read_struct(&mut file)?;
     num_dir_entries = cnd_swap!(num_dir_entries, endianess_diff);
 
     // All the `Option`s below need to be read; if any is missing, we will panic
@@ -353,10 +349,10 @@ pub fn get_tiff_metadata(file_name: &str) -> Result<(u32, u32, PixelFormat, Opti
 
     let mut next_field_pos = file.seek(SeekFrom::Current(0)).unwrap();
     for _ in 0..num_dir_entries {
-        try!(file.seek(SeekFrom::Start(next_field_pos)));
+        file.seek(SeekFrom::Start(next_field_pos))?;
 
-        let mut tiff_field: TiffField = try!(utils::read_struct(&mut file));
-        
+        let mut tiff_field: TiffField = utils::read_struct(&mut file)?;
+
         next_field_pos = file.seek(SeekFrom::Current(0)).unwrap();
 
         preprocess_tiff_field(&mut tiff_field, endianess_diff);
@@ -366,7 +362,7 @@ pub fn get_tiff_metadata(file_name: &str) -> Result<(u32, u32, PixelFormat, Opti
 
             TAG_IMAGE_HEIGHT => img_height = Some(tiff_field.value),
 
-            TAG_BITS_PER_SAMPLE => bits_per_sample = Some(try!(parse_tag_bits_per_sample(&mut file, &tiff_field, endianess_diff))),
+            TAG_BITS_PER_SAMPLE => bits_per_sample = Some(parse_tag_bits_per_sample(&mut file, &tiff_field, endianess_diff)?),
 
             TAG_COMPRESSION => if tiff_field.value != NO_COMPRESSION { return Err(TiffError::CompressionNotSupported); },
 
@@ -380,9 +376,9 @@ pub fn get_tiff_metadata(file_name: &str) -> Result<(u32, u32, PixelFormat, Opti
         }
     }
 
-    try!(validate_tiff_format(samples_per_pixel.unwrap(), photometric_interpretation));
+    validate_tiff_format(samples_per_pixel.unwrap(), photometric_interpretation)?;
 
-    let pix_fmt = determine_pixel_format(samples_per_pixel.unwrap(), bits_per_sample.unwrap()); 
+    let pix_fmt = determine_pixel_format(samples_per_pixel.unwrap(), bits_per_sample.unwrap());
 
     Ok((img_width.unwrap(), img_height.unwrap(), pix_fmt, None))
 }
@@ -394,14 +390,11 @@ pub fn save_tiff(img: &Image, file_name: &str) -> Result<(), TiffError>   {
         PixelFormat::Mono16 |
         PixelFormat::RGB8 |
         PixelFormat::RGB16 => { },
-        
+
         _ => panic!()
     }
 
-    let mut file = try!(OpenOptions::new().read(false)
-                                          .write(true)
-                                          .create(true)
-                                          .open(file_name));
+    let mut file = OpenOptions::new().read(false).write(true).create(true).open(file_name)?;
     let is_be = utils::is_machine_big_endian();
 
     // Note: a 16-bit value (TAG_TYPE_WORD) stored in the 32-bit `tiff_field.value` has to be
@@ -415,10 +408,10 @@ pub fn save_tiff(img: &Image, file_name: &str) -> Result<(), TiffError>   {
                                    version: TIFF_VERSION,
                                    dir_offset: size_of::<TiffHeader>() as u32 };
 
-    try!(utils::write_struct(&tiff_header, &mut file));
-     
+    utils::write_struct(&tiff_header, &mut file)?;
+
     let num_dir_entries: u16 = 10;
-    try!(utils::write_struct(&num_dir_entries, &mut file));
+    utils::write_struct(&num_dir_entries, &mut file)?;
 
     let next_dir_offset = 0u32;
 
@@ -427,28 +420,28 @@ pub fn save_tiff(img: &Image, file_name: &str) -> Result<(), TiffError>   {
                                 count: 1,
                                 value: img.get_width() as u32 };
     if is_be { field.value <<= 16; }
-    try!(utils::write_struct(&field, &mut file));
+    utils::write_struct(&field, &mut file)?;
 
     field = TiffField { tag: TAG_IMAGE_HEIGHT,
                         ftype: TAG_TYPE_WORD,
                         count: 1,
                         value: img.get_height() as u32 };
     if is_be { field.value <<= 16; }
-    try!(utils::write_struct(&field, &mut file));
+    utils::write_struct(&field, &mut file)?;
 
     field = TiffField { tag: TAG_BITS_PER_SAMPLE,
                         ftype: TAG_TYPE_WORD,
                         count: 1,
                         value: bytes_per_channel(img.get_pixel_format()) as u32 * 8 };
     if is_be { field.value <<= 16; }
-    try!(utils::write_struct(&field, &mut file));
+    utils::write_struct(&field, &mut file)?;
 
     field = TiffField { tag: TAG_COMPRESSION,
                         ftype: TAG_TYPE_WORD,
                         count: 1,
                         value: NO_COMPRESSION };
     if is_be { field.value <<= 16; }
-    try!(utils::write_struct(&field, &mut file));
+    utils::write_struct(&field, &mut file)?;
 
     field = TiffField { tag: TAG_PHOTOMETRIC_INTERPRETATION,
                         ftype: TAG_TYPE_WORD,
@@ -459,9 +452,9 @@ pub fn save_tiff(img: &Image, file_name: &str) -> Result<(), TiffError>   {
                                    PixelFormat::RGB8 | PixelFormat::RGB16 => PHMET_RGB,
                                    _ => panic!()
                                }
-                      }; 
+                      };
     if is_be { field.value <<= 16; }
-    try!(utils::write_struct(&field, &mut file));
+    utils::write_struct(&field, &mut file)?;
 
     field = TiffField { tag: TAG_STRIP_OFFSETS,
                         ftype: TAG_TYPE_WORD,
@@ -473,39 +466,39 @@ pub fn save_tiff(img: &Image, file_name: &str) -> Result<(), TiffError>   {
                                size_of_val(&next_dir_offset)) as u32
                       };
     if is_be { field.value <<= 16; }
-    try!(utils::write_struct(&field, &mut file));
+    utils::write_struct(&field, &mut file)?;
 
     field = TiffField { tag: TAG_SAMPLES_PER_PIXEL,
                         ftype: TAG_TYPE_WORD,
                         count: 1,
                         value: get_num_channels(img.get_pixel_format()) as u32 };
     if is_be { field.value <<= 16; }
-    try!(utils::write_struct(&field, &mut file));
+    utils::write_struct(&field, &mut file)?;
 
     field = TiffField { tag: TAG_ROWS_PER_STRIP,
                         ftype: TAG_TYPE_WORD,
                         count: 1,
                         value: img.get_height() as u32 }; // There is only one strip for the whole image
     if is_be { field.value <<= 16; }
-    try!(utils::write_struct(&field, &mut file));
+    utils::write_struct(&field, &mut file)?;
 
     field = TiffField { tag: TAG_STRIP_BYTE_COUNTS,
                         ftype: TAG_TYPE_DWORD,
                         count: 1,
                         value: img.get_bytes_per_line() as u32 * img.get_height() }; // There is only one strip for the whole image
-    try!(utils::write_struct(&field, &mut file));
+    utils::write_struct(&field, &mut file)?;
 
     field = TiffField { tag: TAG_PLANAR_CONFIGURATION,
                         ftype: TAG_TYPE_WORD,
                         count: 1,
                         value: PLANAR_CONFIGURATION_CHUNKY };
     if is_be { field.value <<= 16; }
-    try!(utils::write_struct(&field, &mut file));
+    utils::write_struct(&field, &mut file)?;
 
     // Write the next directory offset (0 = no other directories)
-    try!(utils::write_struct(&next_dir_offset, &mut file));
+    utils::write_struct(&next_dir_offset, &mut file)?;
 
-    try!(file.write_all(img.get_raw_pixels()));
+    file.write_all(img.get_raw_pixels())?;
 
     Ok(())
 }
