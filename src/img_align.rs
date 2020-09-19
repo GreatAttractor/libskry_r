@@ -21,10 +21,29 @@ use std::cmp::{max, min};
 use utils;
 
 
-#[derive(Clone, Copy, Eq, PartialEq)]
+pub struct AnchorConfig {
+    /// Anchor points to use for alignment; if `None`, an anchor will be placed automatically.
+    ///
+    /// Coordinates are relative to the current image's origin.
+    ///
+    pub initial_anchors: Option<Vec<Point>>,
+
+    /// Radius (in pixels) of anchors' reference blocks
+    pub block_radius: u32,
+
+    /// Images are aligned by matching blocks that are offset (horz. and vert.) by up to this radius (in pixels).
+    pub search_radius: u32,
+
+    /// Min. image brightness that an anchor can be placed at (values: [0; 1]).
+    ///
+    /// Value is relative to the image's darkest (0.0) and brightest (1.0) pixels.
+    ///
+    pub placement_brightness_threshold: f32
+}
+
 pub enum AlignmentMethod {
     /// Alignment via block-matching around the specified anchor points
-    Anchors,
+    Anchors(AnchorConfig),
 
     /// Alignment using the image centroid
     Centroid
@@ -92,6 +111,17 @@ impl ImgAlignmentData {
     }
 }
 
+struct AnchorsState {
+    anchors: Vec<AnchorData>,
+    config: AnchorConfig,
+    active_anchor_idx: usize,
+}
+
+enum State {
+    Anchors(AnchorsState),
+    /// Contains current centroid position.
+    Centroid(Point)
+}
 
 /// Performs image alignment (video stabilization).
 ///
@@ -109,30 +139,7 @@ pub struct ImgAlignmentProc<'a> {
     /// Current image index (within the active images' subset).
     curr_img_idx: usize,
 
-    align_method: AlignmentMethod,
-
-    /// Anchor points used for alignment (there is at least one).
-    ///
-    /// Coordinates are relative to the current image's origin.
-    ///
-    anchors: Vec<AnchorData>,
-
-    active_anchor_idx: usize,
-
-    /// Radius (in pixels) of anchors' reference blocks
-    block_radius: u32,
-
-    /// Images are aligned by matching blocks that are offset (horz. and vert.) by up to this radius (in pixels).
-    search_radius: u32,
-
-    /// Min. image brightness that an anchor can be placed at (values: [0; 1]).
-    ///
-    /// Value is relative to the image's darkest (0.0) and brightest (1.0) pixels.
-    ///
-    placement_brightness_threshold: f32,
-
-    /// Current centroid position (if using AlignmentMethod::Centroid).
-    centroid_pos: Point,
+    state: State,
 
     data: ImgAlignmentData
 }
@@ -157,62 +164,74 @@ impl<'a> ImgAlignmentProc<'a> {
     /// `placement_brightness_threshold` - min. image brightness that an anchor can be placed at (values: [0; 1]);
     ///                                    value is relative to the image's darkest (0.0) and brightest (1.0) pixels
     ///
-    pub fn init(img_seq: &'a mut ImageSequence,
-                align_method: AlignmentMethod,
-                anchors: Option<&[Point]>,
-                block_radius: u32,
-                search_radius: u32,
-                placement_brightness_threshold: f32) -> Result<ImgAlignmentProc<'a>, ProcessingError> {
-
+    pub fn init(
+        img_seq: &'a mut ImageSequence,
+        align_method: AlignmentMethod
+    ) -> Result<ImgAlignmentProc<'a>, ProcessingError> {
         assert!(img_seq.get_active_img_count() > 0);
-        if align_method == AlignmentMethod::Anchors {
-            assert!(block_radius > 0 && search_radius > 0);
-        }
 
         img_seq.seek_start();
         let first_img = img_seq.get_curr_img()?;
 
         let img_offsets = Vec::<Point>::with_capacity(img_seq.get_active_img_count());
 
-        let intersection = ImgIntersection{ offset: Point{ x: 0, y: 0 },
-                                            bottom_right: Point { x: i32::max_value(), y: i32::max_value() },
-                                            width: 0,
-                                            height: 0 };
+        let intersection = ImgIntersection{
+            offset: Point{ x: 0, y: 0 },
+            bottom_right: Point { x: i32::max_value(), y: i32::max_value() },
+            width: 0,
+            height: 0
+        };
 
-        let mut centroid_pos = Point::default();
-        let mut anchor_data: Vec<AnchorData> = vec![];
+        let state;
 
-        if align_method == AlignmentMethod::Anchors {
-            let mut automatic_anchor = vec![];
+        match align_method {
+            AlignmentMethod::Anchors(anchor_cfg) => {
+                assert!(anchor_cfg.block_radius > 0 && anchor_cfg.search_radius > 0);
 
-            let anchor_positions: Box<&[Point]>;
-            if !anchors.is_some() {
-                automatic_anchor.push(ImgAlignmentProc::suggest_anchor_pos(&first_img, placement_brightness_threshold, 2*block_radius));
-                anchor_positions = Box::new(&automatic_anchor[..]);
-            } else {
-                anchor_positions = Box::new(anchors.unwrap());
-            }
+                let mut anchor_data: Vec<AnchorData> = vec![];
+                let mut anchor_positions: Vec<Point> = vec![];
 
-            for anchor_pos in *anchor_positions {
-                let ref_block = first_img.convert_pix_fmt_of_subimage(PixelFormat::Mono8,
-                                                                      Point{ x: anchor_pos.x - block_radius as i32,
-                                                                             y: anchor_pos.y - block_radius as i32 },
-                                                                      2*block_radius, 2*block_radius,
-                                                                      Some(DemosaicMethod::Simple));
+                match &anchor_cfg.initial_anchors {
+                    None => anchor_positions.push(ImgAlignmentProc::suggest_anchor_pos(
+                        &first_img,
+                        anchor_cfg.placement_brightness_threshold,
+                        2 * anchor_cfg.block_radius
+                    )),
 
-                let ref_block_qual = filters::estimate_quality(ref_block.get_pixels(),
-                                                               ref_block.get_width(),
-                                                               ref_block.get_height(),
-                                                               ref_block.get_width() as usize,
-                                                               QUALITY_EST_BOX_BLUR_RADIUS);
-                anchor_data.push(
-                    AnchorData{ pos: *anchor_pos,
-                                is_valid: true,
-                                ref_block,
-                                ref_block_qual });
-            }
-        } else {
-            centroid_pos = first_img.get_centroid(first_img.get_img_rect());
+                    Some(positions) => anchor_positions = positions.clone()
+                }
+
+                for anchor_pos in anchor_positions {
+                    let ref_block = first_img.convert_pix_fmt_of_subimage(
+                        PixelFormat::Mono8,
+                        Point{
+                            x: anchor_pos.x - anchor_cfg.block_radius as i32,
+                            y: anchor_pos.y - anchor_cfg.block_radius as i32
+                        },
+                        2 * anchor_cfg.block_radius,
+                        2 * anchor_cfg.block_radius,
+                        Some(DemosaicMethod::Simple)
+                    );
+
+                    let ref_block_qual = filters::estimate_quality(ref_block.get_pixels(),
+                                                                ref_block.get_width(),
+                                                                ref_block.get_height(),
+                                                                ref_block.get_width() as usize,
+                                                                QUALITY_EST_BOX_BLUR_RADIUS);
+                    anchor_data.push(
+                        AnchorData{ pos: anchor_pos,
+                                    is_valid: true,
+                                    ref_block,
+                                    ref_block_qual }
+                    );
+                }
+
+                state = State::Anchors(
+                    AnchorsState{ anchors: anchor_data, config: anchor_cfg, active_anchor_idx: 0}
+                );
+            },
+
+            AlignmentMethod::Centroid => state = State::Centroid(first_img.get_centroid(first_img.get_img_rect()))
         }
 
         Ok(ImgAlignmentProc{
@@ -220,44 +239,39 @@ impl<'a> ImgAlignmentProc<'a> {
             is_complete: false,
             img_seq,
             curr_img_idx: 0,
-            align_method,
-            anchors: anchor_data,
-            active_anchor_idx: 0,
-            block_radius,
-            search_radius,
-            placement_brightness_threshold,
-            centroid_pos,
+            state,
             data: ImgAlignmentData{ intersection, img_offsets }
         })
     }
 
-
-    fn determine_img_offset_using_centroid(&self, img: &Image) -> Point {
-        let new_centroid_pos = img.get_centroid(img.get_img_rect());
-
-        Point{ x: new_centroid_pos.x - self.centroid_pos.x,
-               y: new_centroid_pos.y - self.centroid_pos.y }
-    }
-
-
     pub fn is_complete(&self) -> bool { self.is_complete }
-
 
     /// Returns the current number of anchors.
     ///
     /// The return value may increase during processing (when all existing
     /// anchors became invalid and a new one(s) had to be automatically created).
     ///
-    pub fn get_anchor_count(&self) -> usize { self.anchors.len() }
+    pub fn get_anchor_count(&self) -> usize {
+        match &self.state {
+            State::Anchors(anchors) => anchors.anchors.len(),
+            _ => panic!("Alignment mode is not anchors.")
+        }
+    }
 
-    /// Returns current positions of anchor points
+    /// Returns current positions of anchor points.
     pub fn get_anchors(&self) -> Vec<Point> {
-        self.anchors.iter().map(|ref a| a.pos).collect()
+        match &self.state {
+            State::Anchors(anchors) => anchors.anchors.iter().map(|ref a| a.pos).collect(),
+            _ => panic!("Alignment mode is not anchors.")
+        }
     }
 
 
     pub fn is_anchor_valid(&self, anchor_idx: usize) -> bool {
-        self.anchors[anchor_idx].is_valid
+        match &self.state {
+            State::Anchors(anchors) => anchors.anchors[anchor_idx].is_valid,
+            _ => panic!("Alignment mode is not anchors.")
+        }
     }
 
 
@@ -333,103 +347,122 @@ impl<'a> ImgAlignmentProc<'a> {
         result
     }
 
-
-    pub fn get_alignment_method(&self) -> AlignmentMethod { self.align_method }
-
-
     /// Returns the current centroid position
     pub fn get_current_centroid_pos(&self) -> Point {
-        self.centroid_pos
-    }
-
-
-    fn determine_img_offset_using_anchors(&mut self, img: &Image) -> Point {
-        assert!(img.get_pixel_format() == PixelFormat::Mono8);
-
-        let mut active_anchor_offset = Point::default();
-
-        for (i, anchor) in self.anchors.iter_mut().enumerate() {
-            if anchor.is_valid {
-                let new_pos = blk_match::find_matching_position(anchor.pos, &anchor.ref_block, &img, self.search_radius, 4);
-
-                let blkw = anchor.ref_block.get_width();
-                let blkh = anchor.ref_block.get_height();
-
-                if new_pos.x < (blkw + self.search_radius) as i32 ||
-                   new_pos.x > (img.get_width() - blkw - self.search_radius) as i32 ||
-                   new_pos.y < (blkh + self.search_radius) as i32 ||
-                   new_pos.y > (img.get_height() - blkh - self.search_radius) as i32 {
-
-                    anchor.is_valid = false;
-                    continue;
-                }
-
-                let new_qual = filters::estimate_quality(img.get_mono8_pixels_from(new_pos),
-                                                         blkw, blkh, img.get_width() as usize, QUALITY_EST_BOX_BLUR_RADIUS);
-
-                if new_qual > anchor.ref_block_qual {
-                    anchor.ref_block_qual = new_qual;
-
-                    // Refresh the reference block using the current image at the block's new position
-                    img.convert_pix_fmt_of_subimage_into(&mut anchor.ref_block,
-                                                         Point{ x: new_pos.x - (blkw/2) as i32, y: new_pos.y - (blkh/2) as i32 },
-                                                         Point{ x: 0, y: 0 },
-                                                         blkw, blkh,
-                                                         Some(DemosaicMethod::Simple));
-                }
-
-                if i == self.active_anchor_idx {
-                    active_anchor_offset.x = new_pos.x - anchor.pos.x;
-                    active_anchor_offset.y = new_pos.y - anchor.pos.y;
-                }
-
-                anchor.pos = new_pos;
-            }
+        match &self.state {
+            State::Centroid(centroid) => *centroid,
+            _ => panic!("Alignment mode is not centroid.")
         }
-
-        if !self.anchors[self.active_anchor_idx].is_valid {
-            // Select the next available valid anchor as "active"
-            let mut new_active_idx = self.active_anchor_idx + 1;
-
-            while new_active_idx < self.anchors.len() {
-                if self.anchors[new_active_idx].is_valid {
-                    break;
-                } else {
-                    new_active_idx += 1;
-                }
-            }
-
-            if new_active_idx >= self.anchors.len() {
-                // There are no more existing valid anchors; choose and add a new one
-
-                let new_pos = ImgAlignmentProc::suggest_anchor_pos(&img, self.placement_brightness_threshold, 2*self.block_radius);
-
-
-                let ref_block = img.get_fragment_copy(Point{ x: new_pos.x - self.block_radius as i32,
-                                                             y: new_pos.y - self.block_radius as i32 },
-                                                      2 * self.block_radius,
-                                                      2 * self.block_radius,
-                                                      false);
-                let ref_block_qual = filters::estimate_quality(&ref_block.get_pixels(),
-                                                                  ref_block.get_width(),
-                                                                  ref_block.get_height(),
-                                                                  ref_block.get_width() as usize,
-                                                                  QUALITY_EST_BOX_BLUR_RADIUS);
-                self.anchors.push(
-                    AnchorData{
-                        pos: new_pos,
-                        ref_block,
-                        ref_block_qual,
-                        is_valid: true,
-                    });
-
-                self.active_anchor_idx = self.anchors.len() - 1;
-            }
-        }
-
-        active_anchor_offset
     }
 }
+
+fn determine_img_offset_using_centroid(current_centroid_pos: Point, img: &Image) -> Point {
+    let new_centroid_pos = img.get_centroid(img.get_img_rect());
+
+    Point{
+        x: new_centroid_pos.x - current_centroid_pos.x,
+        y: new_centroid_pos.y - current_centroid_pos.y
+    }
+}
+
+fn determine_img_offset_using_anchors(state: &mut AnchorsState, img: &Image) -> Point {
+    assert!(img.get_pixel_format() == PixelFormat::Mono8);
+
+    let mut active_anchor_offset = Point::default();
+
+    for (i, anchor) in state.anchors.iter_mut().enumerate() {
+        if anchor.is_valid {
+            let s_rad = state.config.search_radius;
+
+            let new_pos = blk_match::find_matching_position(
+                anchor.pos,
+                &anchor.ref_block,
+                &img,
+                s_rad,
+                4
+            );
+
+            let blkw = anchor.ref_block.get_width();
+            let blkh = anchor.ref_block.get_height();
+
+            if new_pos.x < (blkw + s_rad) as i32 ||
+               new_pos.x > (img.get_width() - blkw - s_rad) as i32 ||
+               new_pos.y < (blkh + s_rad) as i32 ||
+               new_pos.y > (img.get_height() - blkh - s_rad) as i32 {
+
+                anchor.is_valid = false;
+                continue;
+            }
+
+            let new_qual = filters::estimate_quality(img.get_mono8_pixels_from(new_pos),
+                                                     blkw, blkh, img.get_width() as usize, QUALITY_EST_BOX_BLUR_RADIUS);
+
+            if new_qual > anchor.ref_block_qual {
+                anchor.ref_block_qual = new_qual;
+
+                // Refresh the reference block using the current image at the block's new position
+                img.convert_pix_fmt_of_subimage_into(&mut anchor.ref_block,
+                                                     Point{ x: new_pos.x - (blkw/2) as i32, y: new_pos.y - (blkh/2) as i32 },
+                                                     Point{ x: 0, y: 0 },
+                                                     blkw, blkh,
+                                                     Some(DemosaicMethod::Simple));
+            }
+
+            if i == state.active_anchor_idx {
+                active_anchor_offset.x = new_pos.x - anchor.pos.x;
+                active_anchor_offset.y = new_pos.y - anchor.pos.y;
+            }
+
+            anchor.pos = new_pos;
+        }
+    }
+
+    if !state.anchors[state.active_anchor_idx].is_valid {
+        // select the next available valid anchor as "active"
+        let mut new_active_idx = state.active_anchor_idx + 1;
+
+        while new_active_idx < state.anchors.len() {
+            if state.anchors[new_active_idx].is_valid {
+                break;
+            } else {
+                new_active_idx += 1;
+            }
+        }
+
+        if new_active_idx >= state.anchors.len() {
+            // there are no more existing valid anchors; choose and add a new one
+
+            let new_pos = ImgAlignmentProc::suggest_anchor_pos(
+                &img, state.config.placement_brightness_threshold, 2 * state.config.search_radius
+            );
+
+
+            let ref_block = img.get_fragment_copy(Point{ x: new_pos.x - state.config.block_radius as i32,
+                                                         y: new_pos.y - state.config.block_radius as i32 },
+                                                  2 * state.config.block_radius,
+                                                  2 * state.config.block_radius,
+                                                  false);
+            let ref_block_qual = filters::estimate_quality(&ref_block.get_pixels(),
+                                                              ref_block.get_width(),
+                                                              ref_block.get_height(),
+                                                              ref_block.get_width() as usize,
+                                                              QUALITY_EST_BOX_BLUR_RADIUS);
+            state.anchors.push(
+                AnchorData{
+                    pos: new_pos,
+                    ref_block,
+                    ref_block_qual,
+                    is_valid: true,
+                }
+            );
+
+            state.active_anchor_idx = state.anchors.len() - 1;
+        }
+    }
+
+    active_anchor_offset
+}
+
 
 
 impl<'a> ProcessingPhase for ImgAlignmentProc<'a> {
@@ -467,8 +500,8 @@ impl<'a> ProcessingPhase for ImgAlignmentProc<'a> {
 
             let detected_img_offset;
 
-            match self.align_method {
-                AlignmentMethod::Anchors => {
+            match &mut self.state {
+                State::Anchors(anchors) => {
                     let img8_storage: Box<Image>;
                     let mut img8 = &img;
                     if img.get_pixel_format() != PixelFormat::Mono8 {
@@ -476,12 +509,12 @@ impl<'a> ProcessingPhase for ImgAlignmentProc<'a> {
                         img8 = &img8_storage;
                     }
 
-                    detected_img_offset = self.determine_img_offset_using_anchors(img8);
+                    detected_img_offset = determine_img_offset_using_anchors(anchors, img8);
                 },
 
-                AlignmentMethod::Centroid => {
-                    detected_img_offset = self.determine_img_offset_using_centroid(&img);
-                    self.centroid_pos += detected_img_offset;
+                State::Centroid(centroid_pos) => {
+                    detected_img_offset = determine_img_offset_using_centroid(*centroid_pos, &img);
+                    *centroid_pos += detected_img_offset;
                 }
             }
 
